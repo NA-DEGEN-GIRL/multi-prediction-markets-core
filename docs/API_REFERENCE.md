@@ -180,13 +180,25 @@ async def create_order(
         Created Order object
     """
 
-async def create_order_batch(orders: list[dict[str, Any]]) -> list[Order]
+async def create_order_batch(orders: list[dict[str, Any]]) -> BatchOrderResult
     """Create multiple orders concurrently.
 
     Args:
         orders: List of order dicts with keys:
             - market_id, side, outcome, size
             - price (optional), size_type (optional)
+
+    Returns:
+        BatchOrderResult with:
+            - successful: list[Order] - Successfully created orders
+            - failed: list[BatchOrderError] - Failed orders with error details
+            - total, success_rate, all_successful, all_failed properties
+
+    Example:
+        result = await exchange.create_order_batch(orders)
+        if not result.all_successful:
+            for err in result.failed:
+                print(f"Order {err.index} failed: {err.error_message}")
     """
 
 async def cancel_orders(

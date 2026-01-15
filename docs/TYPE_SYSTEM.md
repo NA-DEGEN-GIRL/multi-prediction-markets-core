@@ -287,6 +287,56 @@ print(f"Filled: {order.fill_percentage}%") # 0.0
 print(f"Is open: {order.is_open}")         # True
 ```
 
+### BatchOrderResult
+
+Result of batch order operation.
+
+```python
+@dataclass
+class BatchOrderError:
+    index: int                   # Position in original order list
+    order_input: dict[str, Any]  # Original order dict
+    error: Exception             # The exception
+    error_message: str           # Human-readable message
+
+@dataclass
+class BatchOrderResult:
+    successful: list[Order]
+    failed: list[BatchOrderError]
+
+    # Computed properties
+    @property
+    def total(self) -> int: ...
+
+    @property
+    def success_rate(self) -> float: ...  # 0.0 - 100.0
+
+    @property
+    def all_successful(self) -> bool: ...
+
+    @property
+    def all_failed(self) -> bool: ...
+```
+
+**Example:**
+```python
+result = await exchange.create_order_batch([
+    {"market_id": "m1", "side": "buy", "outcome": "yes", "size": 10, "price": 0.65},
+    {"market_id": "m2", "side": "buy", "outcome": "no", "size": 5, "price": 0.40},
+])
+
+print(f"Success: {len(result.successful)}/{result.total}")
+print(f"Success rate: {result.success_rate:.1f}%")
+
+if not result.all_successful:
+    for error in result.failed:
+        print(f"Order {error.index} failed: {error.error_message}")
+
+# Access successful orders
+for order in result.successful:
+    print(f"Created: {order.id}")
+```
+
 ### Position
 
 Current position in a market.

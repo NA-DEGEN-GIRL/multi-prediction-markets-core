@@ -24,6 +24,8 @@ Example:
 
 from prediction_markets.base.exchange import Exchange
 from prediction_markets.base.types import (
+    BatchOrderError,
+    BatchOrderResult,
     Event,
     EventStatus,
     FeeBreakdown,
@@ -90,6 +92,8 @@ __all__ = [
     # Base classes
     "Exchange",
     # Types
+    "BatchOrderError",
+    "BatchOrderResult",
     "Event",
     "EventStatus",
     "Market",

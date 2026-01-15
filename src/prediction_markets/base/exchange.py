@@ -16,6 +16,8 @@ from decimal import Decimal
 from typing import Any
 
 from prediction_markets.base.types import (
+    BatchOrderError,
+    BatchOrderResult,
     Event,
     FeeBreakdown,
     FeeStructure,
@@ -189,7 +191,7 @@ class DefaultImplementationsMixin:
     async def create_order_batch(
         self,
         orders: list[dict[str, Any]],
-    ) -> list[Order]:
+    ) -> BatchOrderResult:
         """
         Create multiple orders concurrently.
 
@@ -201,7 +203,21 @@ class DefaultImplementationsMixin:
                 - market_id, side, outcome, size, price (optional), size_type (optional)
 
         Returns:
-            List of created Order objects
+            BatchOrderResult with successful orders and failed order details
+
+        Example:
+            ```python
+            result = await exchange.create_order_batch([
+                {"market_id": "m1", "side": "buy", "outcome": "yes", "size": 10, "price": 0.65},
+                {"market_id": "m2", "side": "buy", "outcome": "no", "size": 5, "price": 0.40},
+            ])
+
+            print(f"Success: {len(result.successful)}/{result.total}")
+
+            if not result.all_successful:
+                for error in result.failed:
+                    print(f"Order {error.index} failed: {error.error_message}")
+            ```
         """
         tasks = [
             self.create_order(
@@ -217,14 +233,23 @@ class DefaultImplementationsMixin:
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        created_orders: list[Order] = []
+        successful: list[Order] = []
+        failed: list[BatchOrderError] = []
+
         for i, result in enumerate(results):
             if isinstance(result, Exception):
+                error = BatchOrderError(
+                    index=i,
+                    order_input=orders[i],
+                    error=result,
+                    error_message=str(result),
+                )
+                failed.append(error)
                 logger.error(f"[{self.id}] Batch order {i} failed: {result}")
             else:
-                created_orders.append(result)
+                successful.append(result)
 
-        return created_orders
+        return BatchOrderResult(successful=successful, failed=failed)
 
     async def close_position(
         self,

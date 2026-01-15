@@ -339,6 +339,58 @@ class Trade:
 
 
 @dataclass
+class BatchOrderError:
+    """Failed order in batch operation."""
+
+    index: int  # Position in original order list
+    order_input: dict[str, Any]  # Original order dict
+    error: Exception  # The exception that occurred
+    error_message: str  # Human-readable error message
+
+
+@dataclass
+class BatchOrderResult:
+    """Result of batch order operation.
+
+    Example:
+        ```python
+        result = await exchange.create_order_batch(orders)
+
+        print(f"Success: {len(result.successful)}/{result.total}")
+        print(f"Failed: {len(result.failed)}/{result.total}")
+
+        for error in result.failed:
+            print(f"  Order {error.index}: {error.error_message}")
+        ```
+    """
+
+    successful: list["Order"]
+    failed: list[BatchOrderError]
+
+    @property
+    def total(self) -> int:
+        """Total number of orders attempted."""
+        return len(self.successful) + len(self.failed)
+
+    @property
+    def success_rate(self) -> float:
+        """Success rate as percentage (0.0 - 100.0)."""
+        if self.total == 0:
+            return 0.0
+        return len(self.successful) / self.total * 100
+
+    @property
+    def all_successful(self) -> bool:
+        """Check if all orders succeeded."""
+        return len(self.failed) == 0
+
+    @property
+    def all_failed(self) -> bool:
+        """Check if all orders failed."""
+        return len(self.successful) == 0
+
+
+@dataclass
 class ExchangeStatus:
     """Exchange connectivity status."""
 
