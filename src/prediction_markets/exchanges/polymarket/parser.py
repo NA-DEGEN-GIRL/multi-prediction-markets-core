@@ -15,6 +15,8 @@ from typing import Any
 
 from prediction_markets.common.utils import parse_datetime, parse_decimal
 from prediction_markets.base.types import (
+    Event,
+    EventStatus,
     FeeBreakdown,
     FeeStructure,
     Market,
@@ -180,6 +182,92 @@ def get_outcome_from_token(token_id: str, market_tokens: dict[str, dict[str, str
         if tokens.get("no") == token_id:
             return OutcomeSide.NO
     return None
+
+
+# === Event Parsing (Gamma API) ===
+
+
+def parse_event(data: dict[str, Any]) -> Event:
+    """
+    Parse Polymarket event response into Event object.
+
+    Expected from Gamma API /events endpoint.
+
+    Args:
+        data: Raw event data from Gamma API
+
+    Returns:
+        Parsed Event object with markets
+    """
+    import json as json_module
+
+    # Event status
+    active = data.get("active", True)
+    closed = data.get("closed", False)
+    status = _parse_event_status(active, closed)
+
+    # Parse markets array
+    markets_data = data.get("markets", [])
+    if isinstance(markets_data, str):
+        try:
+            markets_data = json_module.loads(markets_data)
+        except json_module.JSONDecodeError:
+            markets_data = []
+
+    # Parse each market and set event association
+    # Filter out closed/inactive markets (not needed in runtime cache)
+    event_slug = data.get("slug", "")
+    event_title = data.get("title", "")
+    markets = []
+    for m in markets_data:
+        is_active = m.get("active", True)
+        is_closed = m.get("closed", False)
+        if is_active and not is_closed:
+            market = parse_market(m)
+            market.event_id = event_slug
+            market.event_title = event_title
+            markets.append(market)
+
+    return Event(
+        id=event_slug,
+        exchange_id=str(data.get("id", "")),
+        exchange="polymarket",
+        slug=event_slug,
+        title=event_title,
+        description=data.get("description", ""),
+        category=data.get("category", ""),
+        status=status,
+        markets=markets,
+        end_date=parse_datetime(data.get("end_date_iso", data.get("endDate"))),
+        volume_24h=parse_decimal(data.get("volume24hr", data.get("volume"))),
+        liquidity=parse_decimal(data.get("liquidity")),
+        image_url=data.get("image"),
+        tags=data.get("tags", []) or [],
+        created_at=parse_datetime(data.get("created_at")),
+        raw=data,
+    )
+
+
+def parse_events(data: list[dict[str, Any]]) -> list[Event]:
+    """
+    Parse multiple events.
+
+    Args:
+        data: List of raw event data from Gamma API
+
+    Returns:
+        List of parsed Event objects
+    """
+    return [parse_event(e) for e in data]
+
+
+def _parse_event_status(active: bool, closed: bool) -> EventStatus:
+    """Convert Polymarket event flags to EventStatus."""
+    if closed:
+        return EventStatus.CLOSED
+    if not active:
+        return EventStatus.RESOLVED
+    return EventStatus.ACTIVE
 
 
 # === Orderbook Parsing (CLOB API) ===

@@ -16,7 +16,7 @@ Example:
 
     # Initialize and use
     await exchange.init()
-    markets = await exchange.load_markets()
+    events = await exchange.load_events()
     await exchange.close()
     ```
 """
@@ -83,7 +83,7 @@ def create_exchange(exchange_id: str, config: dict[str, Any] | None = None) -> E
 
         # With context manager
         async with create_exchange("polymarket", config) as exchange:
-            markets = await exchange.load_markets()
+            events = await exchange.load_events()
 
         # Check supported exchanges
         print(get_supported_exchanges())  # ["polymarket", "kalshi", ...]

@@ -14,9 +14,9 @@ Example:
         })
 
         async with exchange:
-            markets = await exchange.load_markets()
-            for market in markets.values():
-                print(f"{market.title}: {market.status}")
+            events = await exchange.load_events()
+            for event in events.values():
+                print(f"{event.title}: {len(event.markets)} markets")
 
     asyncio.run(main())
     ```
@@ -24,6 +24,8 @@ Example:
 
 from prediction_markets.base.exchange import Exchange
 from prediction_markets.base.types import (
+    Event,
+    EventStatus,
     FeeBreakdown,
     FeeStructure,
     Market,
@@ -88,6 +90,8 @@ __all__ = [
     # Base classes
     "Exchange",
     # Types
+    "Event",
+    "EventStatus",
     "Market",
     "MarketPrice",
     "MarketStatus",

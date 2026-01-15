@@ -12,9 +12,9 @@ Example:
     })
 
     async with exchange:
-        # Load markets
-        markets = await exchange.load_markets()
-        print(f"Found {len(markets)} markets")
+        # Load events (with their markets)
+        events = await exchange.load_events()
+        print(f"Found {len(events)} events")
 
         # Get orderbook
         from prediction_markets import OutcomeSide

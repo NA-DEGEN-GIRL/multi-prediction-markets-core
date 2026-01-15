@@ -64,6 +64,16 @@ class MarketStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class EventStatus(str, Enum):
+    """Event status."""
+
+    ACTIVE = "active"
+    HALTED = "halted"
+    CLOSED = "closed"
+    RESOLVED = "resolved"
+    CANCELLED = "cancelled"
+
+
 class Resolution(str, Enum):
     """Market resolution outcome."""
 
@@ -151,6 +161,44 @@ class Market:
     volume_24h: Decimal | None
     liquidity: Decimal | None
     created_at: datetime | None
+    raw: dict[str, Any] = field(default_factory=dict)  # Raw exchange response
+
+    # Event association (optional)
+    event_id: str | None = None  # Parent Event ID (slug)
+    event_title: str | None = None  # Parent Event title (for convenience)
+
+
+@dataclass
+class Event:
+    """
+    Event groups multiple related markets.
+
+    Example: "Bitcoin Price Predictions" Event contains:
+        - "BTC > $100k by Jan?" Market
+        - "BTC > $150k by March?" Market
+    """
+
+    id: str  # Event ID (typically slug)
+    exchange_id: str  # Exchange-specific ID
+    exchange: str  # Exchange name
+    slug: str  # URL-friendly identifier (polymarket.com/event/{slug})
+    title: str  # Human-readable title
+    description: str
+    category: str
+    status: EventStatus
+
+    markets: list[Market] = field(default_factory=list)  # Child markets
+
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+
+    volume_24h: Decimal | None = None  # Total event volume
+    liquidity: Decimal | None = None  # Total event liquidity
+
+    image_url: str | None = None
+    tags: list[str] = field(default_factory=list)
+
+    created_at: datetime | None = None
     raw: dict[str, Any] = field(default_factory=dict)  # Raw exchange response
 
 

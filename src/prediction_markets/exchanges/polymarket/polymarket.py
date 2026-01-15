@@ -34,6 +34,8 @@ class CachedTokens:
 
 from prediction_markets.base.exchange import Exchange
 from prediction_markets.base.types import (
+    Event,
+    EventStatus,
     FeeStructure,
     Market,
     Order,
@@ -51,6 +53,8 @@ from prediction_markets.common.exceptions import (
 )
 from prediction_markets.exchanges.polymarket.parser import (
     get_fee_structure,
+    parse_event,
+    parse_events,
     parse_market,
     parse_market_tokens,
     parse_order,
@@ -110,8 +114,8 @@ class Polymarket(Exchange):
         })
 
         async with exchange:
-            # Get markets
-            markets = await exchange.load_markets()
+            # Get events (with their markets)
+            events = await exchange.load_events()
 
             # Get orderbook
             ob = await exchange.get_orderbook("condition_id", OutcomeSide.YES)
@@ -140,8 +144,10 @@ class Polymarket(Exchange):
 
     # Feature flags
     has = {
-        "load_markets": True,
-        "search_markets": True,
+        "load_events": True,  # Load events with markets
+        "search_events": True,  # Search events by keyword
+        "get_events": True,  # Event listing with filters
+        "fetch_event": True,  # Fetch single event by slug
         "get_categories": True,
         "get_market_price": True,
         "get_orderbook": True,
@@ -156,9 +162,9 @@ class Polymarket(Exchange):
         "calculate_fees": True,
         "websocket": True,
         # On-chain CTF contract operations (requires web3)
-        "merge_positions": True,
-        "split_positions": True,
-        "redeem_positions": True,
+        "merge": True,
+        "split": True,
+        "redeem": True,
     }
 
     # WebSocket supported features - real-time updates without polling
@@ -334,9 +340,9 @@ class Polymarket(Exchange):
 
     # === Market Data Implementation ===
 
-    async def _fetch_markets(self) -> list[Market]:
+    async def _fetch_events(self) -> list[Event]:
         """
-        Fetch markets from Polymarket via Events endpoint.
+        Fetch events (market groups) from Polymarket.
 
         Uses Gamma API /events endpoint which is more efficient:
         - Each event contains multiple related markets
@@ -344,30 +350,29 @@ class Polymarket(Exchange):
         - Better organized data
         - Parallel fetching for faster loading
 
-        Note: Polymarket has 20,000+ markets. Use max_markets config to limit.
+        Note: Polymarket has 20,000+ markets. Use max_events config to limit.
+
+        Returns:
+            List of Event objects with their markets
         """
         if self._rest_client is None:
             raise RuntimeError("REST client not initialized")
 
-        max_markets = self.config.get("max_markets", 500)
-        use_events = self.config.get("use_events", True)  # 기본값: Events 사용
-        concurrent_requests = self.config.get("concurrent_requests", 5)  # 동시 요청 수
+        max_events = self.config.get("max_events", 200)
+        concurrent_requests = self.config.get("concurrent_requests", 5)
 
-        print(f"[{self.id}] 최대 {max_markets}개 마켓 로드 중...")
+        print(f"[{self.id}] 최대 {max_events}개 이벤트 로드 중...")
 
-        if use_events:
-            return await self._load_markets_via_events(max_markets, concurrent_requests)
-        else:
-            return await self._load_markets_via_markets(max_markets, concurrent_requests)
+        return await self._load_events_parallel(max_events, concurrent_requests)
 
-    async def _load_markets_via_events(
-        self, max_markets: int, concurrent_requests: int = 5
-    ) -> list[Market]:
-        """Load markets via Events endpoint with parallel fetching."""
-        print(f"[{self.id}] Events 엔드포인트 사용 (병렬 로딩, {concurrent_requests}개 동시 요청)")
+    async def _load_events_parallel(
+        self, max_events: int, concurrent_requests: int = 5
+    ) -> list[Event]:
+        """Load events with parallel fetching."""
+        print(f"[{self.id}] Events 병렬 로딩 ({concurrent_requests}개 동시 요청)")
 
         events_limit = 50  # Events per request
-        all_markets: list[Market] = []
+        all_events: list[Event] = []
         semaphore = asyncio.Semaphore(concurrent_requests)
 
         async def fetch_events_page(offset: int) -> list[dict[str, Any]]:
@@ -384,148 +389,56 @@ class Polymarket(Exchange):
                     print(f"[{self.id}] Events fetch failed at offset {offset}: {e}")
                     return []
 
-        # Estimate how many pages we need (conservative: assume ~3 markets per event)
-        estimated_events_needed = max_markets // 3 + events_limit
-        estimated_pages = (estimated_events_needed // events_limit) + 1
+        # Calculate pages needed
+        estimated_pages = (max_events // events_limit) + 2
 
         # Fetch first page to check if there's data
-        first_events = await fetch_events_page(0)
-        if not first_events:
+        first_raw_events = await fetch_events_page(0)
+        if not first_raw_events:
             print(f"[{self.id}] No events found")
             return []
 
         # Process first page
-        self._process_events_batch(first_events, all_markets, max_markets)
-        print(f"[{self.id}] {len(all_markets)}개 마켓 로드됨 (첫 페이지)...")
+        first_events = self._process_raw_events(first_raw_events)
+        all_events.extend(first_events)
+        print(f"[{self.id}] {len(all_events)}개 이벤트 로드됨 (첫 페이지)...")
 
-        if len(all_markets) >= max_markets or len(first_events) < events_limit:
-            print(f"[{self.id}] 총 {len(all_markets)}개 마켓 로드 완료")
-            return all_markets[:max_markets]
+        if len(all_events) >= max_events or len(first_raw_events) < events_limit:
+            print(f"[{self.id}] 총 {len(all_events)}개 이벤트 로드 완료")
+            return all_events[:max_events]
 
         # Fetch remaining pages in parallel
         offsets = list(range(events_limit, estimated_pages * events_limit, events_limit))
         tasks = [fetch_events_page(offset) for offset in offsets]
         results = await asyncio.gather(*tasks)
 
-        for events in results:
-            if not events:
+        for raw_events in results:
+            if not raw_events:
                 continue
-            self._process_events_batch(events, all_markets, max_markets)
-            if len(all_markets) >= max_markets:
+            events = self._process_raw_events(raw_events)
+            all_events.extend(events)
+            if len(all_events) >= max_events:
                 break
 
-        print(f"[{self.id}] 총 {len(all_markets)}개 마켓 로드 완료 (병렬)")
-        return all_markets[:max_markets]
+        print(f"[{self.id}] 총 {len(all_events)}개 이벤트 로드 완료 (병렬)")
+        return all_events[:max_events]
 
-    async def _load_markets_via_markets(
-        self, max_markets: int, concurrent_requests: int = 5
-    ) -> list[Market]:
-        """Load markets via Markets endpoint with parallel fetching."""
-        print(f"[{self.id}] Markets 엔드포인트 사용 (병렬 로딩, {concurrent_requests}개 동시 요청)")
+    def _process_raw_events(self, raw_events: list[dict[str, Any]]) -> list[Event]:
+        """Process raw event data into Event objects with token caching."""
+        events = []
+        for raw_event in raw_events:
+            event = parse_event(raw_event)
+            events.append(event)
 
-        markets_limit = 100
-        all_markets: list[Market] = []
-        semaphore = asyncio.Semaphore(concurrent_requests)
+            # Cache tokens for each market
+            for raw_market in raw_event.get("markets", []):
+                condition_id = raw_market.get("conditionId", raw_market.get("condition_id"))
+                if condition_id:
+                    tokens = parse_market_tokens(raw_market)
+                    if tokens:
+                        self._market_tokens[condition_id] = CachedTokens(tokens=tokens)
 
-        async def fetch_markets_page(offset: int) -> list[dict[str, Any]]:
-            """Fetch a single page of markets."""
-            async with semaphore:
-                try:
-                    return await self._rest_client.get_markets_gamma(
-                        limit=markets_limit,
-                        offset=offset,
-                        active=True,
-                        closed=False,
-                    ) or []
-                except Exception as e:
-                    print(f"[{self.id}] Markets fetch failed at offset {offset}: {e}")
-                    return []
-
-        # Estimate pages needed
-        estimated_pages = (max_markets // markets_limit) + 2
-
-        # Fetch first page to check if there's data
-        first_markets = await fetch_markets_page(0)
-        if not first_markets:
-            print(f"[{self.id}] No markets found")
-            return []
-
-        # Process first page
-        for raw in first_markets:
-            if len(all_markets) >= max_markets:
-                break
-            market = parse_market(raw)
-            all_markets.append(market)
-            tokens = parse_market_tokens(raw)
-            if tokens:
-                self._market_tokens[market.id] = CachedTokens(tokens=tokens)
-
-        print(f"[{self.id}] {len(all_markets)}개 마켓 로드됨 (첫 페이지)...")
-
-        if len(all_markets) >= max_markets or len(first_markets) < markets_limit:
-            print(f"[{self.id}] 총 {len(all_markets)}개 마켓 로드 완료")
-            return all_markets[:max_markets]
-
-        # Fetch remaining pages in parallel
-        offsets = list(range(markets_limit, estimated_pages * markets_limit, markets_limit))
-        tasks = [fetch_markets_page(offset) for offset in offsets]
-        results = await asyncio.gather(*tasks)
-
-        for raw_markets in results:
-            if not raw_markets:
-                continue
-            for raw in raw_markets:
-                if len(all_markets) >= max_markets:
-                    break
-                market = parse_market(raw)
-                all_markets.append(market)
-                tokens = parse_market_tokens(raw)
-                if tokens:
-                    self._market_tokens[market.id] = CachedTokens(tokens=tokens)
-            if len(all_markets) >= max_markets:
-                break
-
-        print(f"[{self.id}] 총 {len(all_markets)}개 마켓 로드 완료 (병렬)")
-        return all_markets[:max_markets]
-
-    def _process_events_batch(
-        self,
-        events: list[dict[str, Any]],
-        all_markets: list[Market],
-        max_markets: int,
-    ) -> None:
-        """Process a batch of events and extract markets."""
-        import json as json_module
-
-        for event in events:
-            if len(all_markets) >= max_markets:
-                break
-
-            # Extract markets from event
-            event_markets = event.get("markets", [])
-
-            # Handle markets as string (JSON) or list
-            if isinstance(event_markets, str):
-                try:
-                    event_markets = json_module.loads(event_markets)
-                except json_module.JSONDecodeError:
-                    event_markets = []
-
-            for raw in event_markets:
-                if len(all_markets) >= max_markets:
-                    break
-
-                # Skip closed markets
-                if raw.get("closed", False) or not raw.get("active", True):
-                    continue
-
-                market = parse_market(raw)
-                all_markets.append(market)
-
-                # Cache token IDs with TTL
-                tokens = parse_market_tokens(raw)
-                if tokens:
-                    self._market_tokens[market.id] = CachedTokens(tokens=tokens)
+        return events
 
     async def _fetch_orderbook_rest(self, market_id: str, outcome: OutcomeSide) -> OrderBook:
         """
@@ -1050,7 +963,7 @@ class Polymarket(Exchange):
 
     # === On-chain CTF Operations (Split/Merge/Redeem) ===
 
-    async def split_position(
+    async def split(
         self,
         condition_id: str,
         amount: Decimal,
@@ -1069,7 +982,7 @@ class Polymarket(Exchange):
 
         Example:
             ```python
-            result = await exchange.split_position(
+            result = await exchange.split(
                 condition_id="0x...",  # or Polymarket URL
                 amount=Decimal("10"),  # Split $10 USDC
             )
@@ -1112,12 +1025,12 @@ class Polymarket(Exchange):
             }
         else:
             raise RuntimeError(
-                "split_position requires Builder credentials. "
+                "split requires Builder credentials."
                 "Set POLYMARKET_BUILDER_API_KEY, POLYMARKET_BUILDER_SECRET, POLYMARKET_BUILDER_PASSPHRASE "
                 "in your .env file. Get credentials at polymarket.com/settings?tab=builder"
             )
 
-    async def merge_positions(
+    async def merge(
         self,
         condition_id: str,
         amount: Decimal,
@@ -1137,7 +1050,7 @@ class Polymarket(Exchange):
 
         Example:
             ```python
-            result = await exchange.merge_positions(
+            result = await exchange.merge(
                 condition_id="0x...",  # or Polymarket URL
                 amount=Decimal("10"),  # Merge 10 YES + 10 NO -> $10 USDC
             )
@@ -1180,12 +1093,12 @@ class Polymarket(Exchange):
             }
         else:
             raise RuntimeError(
-                "merge_positions requires Builder credentials. "
+                "merge requires Builder credentials. "
                 "Set POLYMARKET_BUILDER_API_KEY, POLYMARKET_BUILDER_SECRET, POLYMARKET_BUILDER_PASSPHRASE "
                 "in your .env file. Get credentials at polymarket.com/settings?tab=builder"
             )
 
-    async def redeem_positions(
+    async def redeem(
         self,
         condition_id: str,
     ) -> dict[str, Any]:
@@ -1220,7 +1133,7 @@ class Polymarket(Exchange):
             }
         else:
             raise RuntimeError(
-                "redeem_positions requires Builder credentials. "
+                "redeem requires Builder credentials. "
                 "Set POLYMARKET_BUILDER_API_KEY, POLYMARKET_BUILDER_SECRET, POLYMARKET_BUILDER_PASSPHRASE "
                 "in your .env file. Get credentials at polymarket.com/settings?tab=builder"
             )
@@ -1328,11 +1241,13 @@ class Polymarket(Exchange):
         return mapping.get(order_type, "GTC")
 
 
-    async def search_markets(
+    async def search_events(
         self, keyword: str, limit: int = 50, tag: str | None = None
-    ) -> list[Market]:
+    ) -> list[Event]:
         """
-        Search markets by keyword.
+        Search events by keyword.
+
+        Returns Event objects with their markets grouped together.
 
         Args:
             keyword: Search keyword
@@ -1340,11 +1255,12 @@ class Polymarket(Exchange):
             tag: Optional tag filter (slug, e.g., "crypto", "politics")
 
         Returns:
-            List of matching markets
+            List of matching Event objects
 
         Example:
-            markets = await exchange.search_markets("bitcoin")
-            markets = await exchange.search_markets("price", tag="crypto")
+            events = await exchange.search_events("bitcoin")
+            for event in events:
+                print(f"{event.title}: {len(event.markets)} markets")
         """
         if self._rest_client is None:
             raise RuntimeError("REST client not initialized")
@@ -1352,39 +1268,30 @@ class Polymarket(Exchange):
         response = await self._rest_client.search_markets(keyword=keyword, limit=limit, tag=tag)
 
         # /public-search returns {events: [...], tags: [...], profiles: [...]}
-        events = response.get("events", []) or []
+        raw_events = response.get("events", []) or []
 
-        markets = []
-        for event in events:
-            # Event contains nested markets array
-            nested_markets = event.get("markets", [])
+        events = []
+        for raw_event in raw_events:
+            event = parse_event(raw_event)
 
-            if nested_markets:
-                # Parse each market in the event
-                for raw_market in nested_markets:
-                    market = parse_market(raw_market)
-                    markets.append(market)
+            # Skip closed events or events with no active markets
+            if event.status == EventStatus.CLOSED or not event.markets:
+                continue
 
-                    # Add to _markets cache for orderbook/price lookups
-                    self._markets[market.id] = market
+            events.append(event)
 
-                    # Cache token IDs with TTL
-                    tokens = parse_market_tokens(raw_market)
-                    if tokens:
-                        self._market_tokens[market.id] = CachedTokens(tokens=tokens)
-            else:
-                # Fallback: event itself as a market (simple yes/no)
-                market = parse_market(event)
-                markets.append(market)
-
-                # Add to _markets cache
+            # Cache markets and tokens
+            for market in event.markets:
                 self._markets[market.id] = market
 
-                tokens = parse_market_tokens(event)
-                if tokens:
-                    self._market_tokens[market.id] = CachedTokens(tokens=tokens)
+            for raw_market in raw_event.get("markets", []):
+                condition_id = raw_market.get("conditionId", raw_market.get("condition_id"))
+                if condition_id:
+                    tokens = parse_market_tokens(raw_market)
+                    if tokens:
+                        self._market_tokens[condition_id] = CachedTokens(tokens=tokens)
 
-        return markets
+        return events
 
     async def get_categories(self, limit: int = 100) -> list[dict[str, Any]]:
         """
@@ -1405,3 +1312,93 @@ class Polymarket(Exchange):
             raise RuntimeError("REST client not initialized")
 
         return await self._rest_client.get_categories(limit=limit)
+
+    async def get_events(
+        self,
+        category: str | None = None,
+        active: bool = True,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Event]:
+        """
+        Get events from Polymarket.
+
+        Events group related markets. For example, "Bitcoin Price Predictions"
+        contains multiple BTC price threshold markets.
+
+        Args:
+            category: Filter by category (not yet implemented for Polymarket)
+            active: Include only active events (default True)
+            limit: Maximum events to return
+            offset: Pagination offset
+
+        Returns:
+            List of Event objects with their markets
+
+        Example:
+            events = await exchange.get_events(limit=10)
+            for event in events:
+                print(f"{event.title}: {len(event.markets)} markets")
+        """
+        if self._rest_client is None:
+            raise RuntimeError("REST client not initialized")
+
+        raw_events = await self._rest_client.get_events(
+            limit=limit,
+            offset=offset,
+            active=active,
+            closed=not active,
+        )
+        events = parse_events(raw_events)
+
+        # Cache markets and tokens from events
+        for event in events:
+            for market in event.markets:
+                self._markets[market.id] = market
+                # Cache tokens if available from raw data
+                for raw_market in event.raw.get("markets", []):
+                    if raw_market.get("conditionId") == market.id:
+                        tokens = parse_market_tokens(raw_market)
+                        if tokens:
+                            self._market_tokens[market.id] = CachedTokens(tokens=tokens)
+                        break
+
+        return events
+
+    async def fetch_event(self, event_id: str) -> Event:
+        """
+        Fetch single event by slug from exchange.
+
+        Args:
+            event_id: Event slug (e.g., "bitcoin-price-predictions")
+
+        Returns:
+            Event object with its markets
+
+        Raises:
+            ValueError: If event not found
+
+        Example:
+            event = await exchange.fetch_event("bitcoin-price-predictions")
+            print(f"{event.title}: {len(event.markets)} markets")
+        """
+        if self._rest_client is None:
+            raise RuntimeError("REST client not initialized")
+
+        raw_event = await self._rest_client.get_event_by_slug(event_id)
+        if not raw_event:
+            raise ValueError(f"Event not found: {event_id}")
+
+        event = parse_event(raw_event)
+
+        # Cache markets and tokens
+        for market in event.markets:
+            self._markets[market.id] = market
+            for raw_market in raw_event.get("markets", []):
+                if raw_market.get("conditionId") == market.id:
+                    tokens = parse_market_tokens(raw_market)
+                    if tokens:
+                        self._market_tokens[market.id] = CachedTokens(tokens=tokens)
+                    break
+
+        return event

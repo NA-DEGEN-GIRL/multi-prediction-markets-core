@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import Any
 
 from prediction_markets.base.types import (
+    Event,
     FeeBreakdown,
     FeeStructure,
     Market,
@@ -76,15 +77,16 @@ class ExchangeBase(ABC):
     # --- Market Data ---
 
     @abstractmethod
-    async def _fetch_markets(self) -> list[Market]:
-        """Fetch all markets from exchange."""
-        pass
+    async def _fetch_events(self) -> list[Event]:
+        """
+        Fetch events (market groups) from exchange.
 
-    @abstractmethod
-    async def search_markets(
-        self, keyword: str, limit: int = 20, tag: str | None = None
-    ) -> list[Market]:
-        """Search markets by keyword."""
+        For exchanges without native event support, return a single
+        "all" event containing all markets.
+
+        Returns:
+            List of Event objects with their markets
+        """
         pass
 
     @abstractmethod
@@ -157,17 +159,17 @@ class ExchangeBase(ABC):
     # --- On-chain Operations ---
 
     @abstractmethod
-    async def split_position(self, market_id: str, amount: Decimal) -> dict[str, Any]:
+    async def split(self, market_id: str, amount: Decimal) -> dict[str, Any]:
         """Split collateral into YES + NO tokens."""
         pass
 
     @abstractmethod
-    async def merge_positions(self, market_id: str, amount: Decimal) -> dict[str, Any]:
+    async def merge(self, market_id: str, amount: Decimal) -> dict[str, Any]:
         """Merge YES + NO tokens back into collateral."""
         pass
 
     @abstractmethod
-    async def redeem_positions(self, market_id: str) -> dict[str, Any]:
+    async def redeem(self, market_id: str) -> dict[str, Any]:
         """Redeem winning positions after market resolution."""
         pass
 
@@ -312,7 +314,7 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         ```python
         exchange = create_exchange("polymarket", config)
         async with exchange:
-            markets = await exchange.load_markets()
+            events = await exchange.load_events()
             order = await exchange.create_order(...)
         ```
     """
@@ -324,8 +326,10 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
     ws_support: bool = True
 
     has: dict[str, bool] = {
-        "load_markets": True,
-        "search_markets": True,
+        "load_events": True,  # Load events with markets
+        "search_events": True,  # Search events by keyword
+        "get_events": False,  # Event listing with filters (optional)
+        "fetch_event": False,  # Fetch single event by ID (optional)
         "get_market_price": True,
         "get_orderbook": True,
         "get_market_resolution": True,
@@ -336,9 +340,9 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         "get_position": True,
         "close_position": True,
         "get_portfolio_summary": True,
-        "split_positions": True,
-        "merge_positions": True,
-        "redeem_positions": True,
+        "split": True,
+        "merge": True,
+        "redeem": True,
         "calculate_fees": True,
     }
 
@@ -364,7 +368,8 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         self.ws_enabled = config.get("ws_enabled", True) and self.ws_support
 
         self._initialized = False
-        self._markets: dict[str, Market] = {}
+        self._events: dict[str, Event] = {}  # event_id -> Event
+        self._markets: dict[str, Market] = {}  # market_id -> Market (flat cache)
         self._markets_by_exchange_id: dict[str, str] = {}
         self._orderbooks: dict[str, dict[OutcomeSide, OrderBook]] = {}
         self._ws_connected = False
@@ -379,8 +384,8 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         print(f"[{self.id}] Initializing...")
         await self._init_rest_client()
 
-        print(f"[{self.id}] Loading markets...")
-        await self.load_markets()
+        print(f"[{self.id}] Loading events/markets...")
+        await self.load_events()
 
         if self.ws_enabled:
             print(f"[{self.id}] WebSocket enabled (lazy connect)")
@@ -407,33 +412,47 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
 
     # === Market Data ===
 
-    async def load_markets(self, reload: bool = False) -> dict[str, Market]:
+    async def load_events(self, reload: bool = False) -> dict[str, Event]:
         """
-        Load markets from exchange.
+        Load events (market groups) from exchange.
 
-        Note: For exchanges with many markets (e.g., Polymarket),
-        this returns a subset of recent/active markets, not all markets.
-        Use search_markets() for finding specific markets.
+        Events contain related markets. For exchanges without native
+        event support, all markets are grouped under an "all" event.
 
         Args:
             reload: Force reload even if already loaded
 
         Returns:
-            Dict mapping market ID to Market object
+            Dict mapping event ID to Event object
+
+        Note:
+            Only active events with active markets are loaded.
+            Closed/resolved markets are filtered out as they are
+            only needed for position redemption.
         """
-        if self._markets and not reload:
-            return self._markets
+        if self._events and not reload:
+            return self._events
 
-        markets = await self._fetch_markets()
+        events = await self._fetch_events()
 
+        self._events.clear()
         self._markets.clear()
         self._markets_by_exchange_id.clear()
 
-        for market in markets:
-            self._markets[market.id] = market
-            self._markets_by_exchange_id[market.exchange_id] = market.id
+        for event in events:
+            self._events[event.id] = event
+            # Also populate flat market cache
+            for market in event.markets:
+                self._markets[market.id] = market
+                self._markets_by_exchange_id[market.exchange_id] = market.id
 
-        return self._markets
+        return self._events
+
+    def get_event(self, event_id: str) -> Event:
+        """Get event by ID from cache."""
+        if event_id not in self._events:
+            raise ValueError(f"Event '{event_id}' not found in cache")
+        return self._events[event_id]
 
     def get_market(self, market_id: str) -> Market:
         """Get market by ID."""
@@ -444,6 +463,78 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
                 market_id=market_id,
             )
         return self._markets[market_id]
+
+    async def search_events(
+        self,
+        keyword: str,
+        limit: int = 50,
+        tag: str | None = None,
+    ) -> list[Event]:
+        """
+        Search events by keyword.
+
+        Returns Event objects with their grouped markets.
+
+        Args:
+            keyword: Search keyword
+            limit: Maximum events to return
+            tag: Optional category tag filter
+
+        Returns:
+            List of Event objects with their markets
+
+        Note:
+            Only active events with active markets are returned.
+            Closed/resolved markets are filtered out as they are
+            only needed for position redemption.
+        """
+        self._check_feature("search_events")
+        raise NotImplementedError("search_events not implemented for this exchange")
+
+    async def get_events(
+        self,
+        category: str | None = None,
+        active: bool = True,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Event]:
+        """
+        Get events with optional filtering.
+
+        Events group related markets (e.g., "Bitcoin Price Predictions" contains
+        multiple BTC price threshold markets).
+
+        Args:
+            category: Filter by category (optional)
+            active: Include only active events (default True)
+            limit: Maximum events to return
+            offset: Pagination offset
+
+        Returns:
+            List of Event objects with their markets
+
+        Raises:
+            UnsupportedFeatureError: If exchange doesn't support events
+        """
+        self._check_feature("get_events")
+        raise NotImplementedError("get_events not implemented for this exchange")
+
+    async def fetch_event(self, event_id: str) -> Event:
+        """
+        Fetch single event by ID or slug from exchange.
+
+        Args:
+            event_id: Event ID or slug
+
+        Returns:
+            Event object with its markets
+
+        Raises:
+            UnsupportedFeatureError: If exchange doesn't support events
+            ValueError: If event not found
+        """
+        self._check_feature("fetch_event")
+        raise NotImplementedError("fetch_event not implemented for this exchange")
 
     async def get_orderbook(
         self,

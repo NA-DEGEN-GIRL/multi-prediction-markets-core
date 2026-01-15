@@ -98,9 +98,10 @@ async def main():
         try:
             # If no input, pick random active market
             if not market_input:
-                print(f"\nLoading markets...")
-                all_markets = await exchange.load_markets()
-                active_markets = [m for m in all_markets.values() if m.status == MarketStatus.ACTIVE]
+                print(f"\nLoading events...")
+                events = await exchange.load_events()
+                all_markets = [m for e in events.values() for m in e.markets]
+                active_markets = [m for m in all_markets if m.status == MarketStatus.ACTIVE]
 
                 if not active_markets:
                     print("No active markets found")
@@ -168,7 +169,8 @@ async def main():
                 elif is_slug:
                     # Slug - search and show selection
                     print(f"\n[SEARCH] '{market_id}' 검색 중...")
-                    results = await exchange.search_markets(keyword=market_id, limit=20)
+                    events = await exchange.search_events(keyword=market_id, limit=20)
+                    results = [m for e in events for m in e.markets]
 
                     if not results:
                         print(f"검색 결과 없음")

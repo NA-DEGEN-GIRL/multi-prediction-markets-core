@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import re
 
-from prediction_markets import create_exchange, get_polymarket_config, get_test_config
+from prediction_markets import create_exchange, get_polymarket_config, get_test_config, Event, EventStatus
 from prediction_markets.base.types import MarketStatus, OrderSide, OutcomeSide, SizeType
 
 # === 설정 (from .env and .env.config) ===
@@ -56,8 +56,8 @@ SPLIT_AMOUNT = Decimal(str(TEST_CONFIG.split_amount))
 # 테스트 스킵 설정
 SKIP = {
     "get_categories": False,  # 카테고리 목록 (Crypto, Sports, Politics 등)
-    "load_markets": True,  # 검색만 사용할거면 True
-    "search_markets": False,
+    "load_events": True,  # 검색만 사용할거면 True
+    "search_events": False,  # 이벤트 검색 (이벤트 → 마켓 선택)
     "market_details": False,  # 상세 마켓 정보
     "orderbook": False,
     "market_price": False,
@@ -137,6 +137,15 @@ def print_position_details(p, prefix="", show_raw: bool = True):
         print_raw(p.raw, prefix=prefix)
 
 
+def print_event_summary(event: Event, index: int, prefix: str = ""):
+    """Print event summary for selection."""
+    status_icon = "🟢" if event.status == EventStatus.ACTIVE else "🔴"
+    vol = format_decimal(event.volume_24h) if event.volume_24h else "N/A"
+    print(f"{prefix}{index}. {status_icon} {event.title}")
+    print(f"{prefix}   Markets: {len(event.markets)}개 | Volume: ${vol}")
+    print(f"{prefix}   Slug: {event.slug}")
+
+
 async def usd_to_shares(exchange, market_id: str, usd_amount: Decimal, outcome: OutcomeSide) -> Decimal:
     """Convert USD amount to shares based on current market price."""
     try:
@@ -193,53 +202,57 @@ async def main():
             print(f"     Signing Wallet: {exchange.address}")
             print(f"     (Split/Merge용 MATIC 필요: https://polygonscan.com/address/{exchange.address})")
 
-        # === 고정 마켓 ID 사용시 마켓 정보 로드 ===
+        # === 고정 마켓/이벤트 ID 사용시 로드 ===
         if FIXED_MARKET_ID:
-            print(f"\n--- 고정 마켓 로드 ---")
+            print(f"\n--- 고정 마켓/이벤트 로드 ---")
             try:
-                # 이벤트 URL인지 확인 (마켓 slug 없이 event slug만 있는 경우)
+                # 이벤트 URL/slug인지 확인
                 is_event_url = bool(re.search(r"polymarket\.com/event/[^/]+/?$", FIXED_MARKET_ID))
-
+                # 이벤트 slug 추출 (URL이면 slug만)
+                event_slug = None
                 if is_event_url:
-                    # 이벤트의 마켓 목록 조회
-                    event_data = await exchange.get_event_markets(FIXED_MARKET_ID)
-                    event_title = event_data["event_title"]
-                    markets = event_data["markets"]
+                    match = re.search(r"/event/([^/]+)/?", FIXED_MARKET_ID)
+                    event_slug = match.group(1) if match else FIXED_MARKET_ID
+                elif "/" not in FIXED_MARKET_ID and not FIXED_MARKET_ID.startswith("0x"):
+                    # 0x로 시작하지 않는 짧은 문자열 = event slug로 간주
+                    event_slug = FIXED_MARKET_ID
 
-                    print(f"\n[EVENT] {event_title}")
-                    print(f"        {len(markets)}개의 마켓이 있습니다. 선택하세요:\n")
+                if event_slug:
+                    # fetch_event로 이벤트 조회
+                    event = await exchange.fetch_event(event_slug)
 
-                    for i, m in enumerate(markets, 1):
-                        question = m.get("question", "")
-                        vol = m.get("volume24hr", "N/A")
-                        active = "🟢" if m.get("active") else "🔴"
-                        print(f"     {i}. {active} {question}")
+                    print(f"\n[EVENT] {event.title}")
+                    print(f"        {len(event.markets)}개의 마켓이 있습니다. 선택하세요:\n")
+
+                    for i, m in enumerate(event.markets, 1):
+                        status_icon = "🟢" if m.status == MarketStatus.ACTIVE else "🔴"
+                        vol = format_decimal(m.volume_24h) if m.volume_24h else "N/A"
+                        print(f"     {i}. {status_icon} {m.title}")
                         print(f"        Volume: ${vol}")
-                        print(f"        Slug: {m.get('slug')}")
                         print()
 
                     # 사용자 입력 받기
                     while True:
                         try:
-                            choice = input(f"     마켓 번호 선택 (1-{len(markets)}): ").strip()
+                            choice = input(f"     마켓 번호 선택 (1-{len(event.markets)}): ").strip()
                             idx = int(choice) - 1
-                            if 0 <= idx < len(markets):
-                                selected_market_data = markets[idx]
-                                selected_market_id = selected_market_data.get("conditionId")
-                                print(f"\n[OK] 선택됨: {selected_market_data.get('question', '')}")
+                            if 0 <= idx < len(event.markets):
+                                selected_market = event.markets[idx]
+                                selected_market_id = selected_market.id
+                                print(f"\n[OK] 선택됨: {selected_market.title}")
                                 break
                             else:
-                                print(f"     [ERROR] 1-{len(markets)} 사이의 번호를 입력하세요.")
+                                print(f"     [ERROR] 1-{len(event.markets)} 사이의 번호를 입력하세요.")
                         except ValueError:
                             print(f"     [ERROR] 숫자를 입력하세요.")
+                else:
+                    # 마켓 ID로 직접 로드
+                    selected_market = await exchange.fetch_market(FIXED_MARKET_ID)
+                    selected_market_id = selected_market.id
 
-                # 마켓 정보 로드
-                selected_market = await exchange.fetch_market(selected_market_id)
-                # URL이나 다른 형식이었으면 conditionId로 변환됨
-                selected_market_id = selected_market.id
                 print(f"[OK] 마켓 로드 완료")
                 print(f"     Condition ID: {selected_market_id}")
-                print_market_details(selected_market, prefix="     ")
+                print_market_details(selected_market, prefix="     ", show_raw=False)
 
                 # 토큰 ID 캐싱
                 from prediction_markets.exchanges.polymarket.parser import parse_market_tokens
@@ -249,7 +262,7 @@ async def main():
                     print(f"     Tokens: {tokens}")
 
             except Exception as e:
-                print(f"[FAIL] 고정 마켓 로드 실패: {e}")
+                print(f"[FAIL] 고정 마켓/이벤트 로드 실패: {e}")
                 import traceback
                 traceback.print_exc()
                 selected_market_id = None  # 실패시 검색으로 폴백
@@ -270,68 +283,92 @@ async def main():
             except Exception as e:
                 print(f"[FAIL] get_categories: {e}")
 
-        # === load_markets (선택적) ===
-        if not SKIP["load_markets"]:
-            print(f"\n--- load_markets ---")
+        # === load_events (선택적) ===
+        if not SKIP["load_events"]:
+            print(f"\n--- load_events ---")
             try:
-                markets = await exchange.load_markets()
-                print(f"[OK] {len(markets)}개 마켓 로드")
-                for i, (mid, m) in enumerate(list(markets.items())[:3]):
-                    print(f"     {i+1}. {m.title}")
+                events = await exchange.load_events()
+                total_markets = sum(len(e.markets) for e in events.values())
+                print(f"[OK] {len(events)}개 이벤트 로드 (총 {total_markets}개 마켓)")
+                for i, (eid, e) in enumerate(list(events.items())[:3]):
+                    print(f"     {i+1}. {e.title} ({len(e.markets)}개 마켓)")
             except Exception as e:
-                print(f"[FAIL] load_markets: {e}")
+                print(f"[FAIL] load_events: {e}")
 
-        # === search_markets (고정 마켓 없을때만) ===
-        if not SKIP["search_markets"] and not FIXED_MARKET_ID:
+        # === search_events (이벤트 → 마켓 선택) ===
+        if not SKIP["search_events"] and not FIXED_MARKET_ID:
             tag_info = f", tag='{SEARCH_TAG}'" if SEARCH_TAG else ""
-            print(f"\n--- search_markets (keyword='{SEARCH_QUERY}'{tag_info}) ---")
+            print(f"\n--- search_events (keyword='{SEARCH_QUERY}'{tag_info}) ---")
             try:
-                # /public-search 엔드포인트로 검색
-                results = await exchange.search_markets(keyword=SEARCH_QUERY, tag=SEARCH_TAG, limit=SEARCH_LIMIT)
-                print(f"[OK] {len(results)}개 검색됨")
+                # 이벤트 검색
+                events = await exchange.search_events(keyword=SEARCH_QUERY, tag=SEARCH_TAG, limit=SEARCH_LIMIT)
+                print(f"[OK] {len(events)}개 이벤트 검색됨\n")
 
-                # DEBUG: 첫 5개 결과 확인
-                for i, m in enumerate(results[:5]):
-                    print(f"     {i+1}. {m.title}")
-
-                # 필터링: title에 검색어 포함 + Volume + Active
-                filtered = []
-                search_lower = SEARCH_QUERY.lower()
-                for m in results:
-                    vol = m.volume_24h or Decimal("0")
-                    title_match = search_lower in m.title.lower()
-                    if title_match and vol >= MIN_VOLUME and m.status == MarketStatus.ACTIVE:
-                        filtered.append(m)
-
-                print(f"     Title contains '{SEARCH_QUERY}' & Volume >= ${MIN_VOLUME} & Active: {len(filtered)}개")
-
-                if filtered:
-                    # 볼륨 높은 순으로 정렬
-                    filtered.sort(key=lambda x: x.volume_24h or Decimal("0"), reverse=True)
-
-                    print(f"\n     [필터링된 마켓 목록]")
-                    for i, m in enumerate(filtered):
-                        vol = format_decimal(m.volume_24h)
-                        print(f"     {i+1}. {m.title} (Vol: ${vol})")
-
-                    # 랜덤 선택
-                    selected_market = random.choice(filtered)
-                    selected_market_id = selected_market.id
-
-                    # 검색된 마켓의 토큰 ID 캐싱
-                    from prediction_markets.exchanges.polymarket.parser import parse_market_tokens
-                    tokens = parse_market_tokens(selected_market.raw)
-                    if tokens:
-                        exchange._market_tokens[selected_market_id] = tokens
-                        print(f"     Tokens: {tokens}")
-
-                    print(f"\n     [랜덤 선택된 마켓]")
-                    print_market_details(selected_market, prefix="     ")
+                if not events:
+                    print(f"     [WARN] 검색 결과 없음")
                 else:
-                    print(f"     [WARN] 조건에 맞는 마켓 없음")
+                    # 이벤트 목록 표시
+                    print(f"     [이벤트 목록]")
+                    for i, event in enumerate(events, 1):
+                        print_event_summary(event, i, prefix="     ")
+                        print()
+
+                    # 이벤트 선택
+                    selected_event = None
+                    while True:
+                        try:
+                            choice = input(f"     이벤트 번호 선택 (1-{len(events)}, 0=건너뛰기): ").strip()
+                            if choice == "0":
+                                print(f"     이벤트 선택 건너뜀")
+                                break
+                            idx = int(choice) - 1
+                            if 0 <= idx < len(events):
+                                selected_event = events[idx]
+                                print(f"\n     [선택됨] {selected_event.title}")
+                                break
+                            else:
+                                print(f"     [ERROR] 1-{len(events)} 사이의 번호를 입력하세요.")
+                        except ValueError:
+                            print(f"     [ERROR] 숫자를 입력하세요.")
+
+                    # 마켓 선택
+                    if selected_event and selected_event.markets:
+                        print(f"\n     [마켓 목록] ({len(selected_event.markets)}개)")
+                        for i, m in enumerate(selected_event.markets, 1):
+                            status_icon = "🟢" if m.status == MarketStatus.ACTIVE else "🔴"
+                            vol = format_decimal(m.volume_24h) if m.volume_24h else "N/A"
+                            print(f"     {i}. {status_icon} {m.title}")
+                            print(f"        Volume: ${vol} | ID: {m.id[:20]}...")
+                            print()
+
+                        while True:
+                            try:
+                                choice = input(f"     마켓 번호 선택 (1-{len(selected_event.markets)}): ").strip()
+                                idx = int(choice) - 1
+                                if 0 <= idx < len(selected_event.markets):
+                                    selected_market = selected_event.markets[idx]
+                                    selected_market_id = selected_market.id
+                                    print(f"\n     [선택됨] {selected_market.title}")
+
+                                    # 토큰 ID 캐싱
+                                    from prediction_markets.exchanges.polymarket.parser import parse_market_tokens
+                                    tokens = parse_market_tokens(selected_market.raw)
+                                    if tokens:
+                                        exchange._market_tokens[selected_market_id] = tokens
+                                        print(f"     Tokens: {tokens}")
+
+                                    print()
+                                    print_market_details(selected_market, prefix="     ", show_raw=False)
+                                    break
+                                else:
+                                    print(f"     [ERROR] 1-{len(selected_event.markets)} 사이의 번호를 입력하세요.")
+                            except ValueError:
+                                print(f"     [ERROR] 숫자를 입력하세요.")
+                    elif selected_event:
+                        print(f"     [WARN] 선택된 이벤트에 마켓이 없습니다.")
 
             except Exception as e:
-                print(f"[FAIL] search_markets: {e}")
+                print(f"[FAIL] search_events: {e}")
                 import traceback
                 traceback.print_exc()
 
