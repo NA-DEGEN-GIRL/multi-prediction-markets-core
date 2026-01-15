@@ -16,9 +16,9 @@ Example:
         events = await exchange.load_events()
         print(f"Found {len(events)} events")
 
-        # Get orderbook
+        # Fetch orderbook
         from prediction_markets import OutcomeSide
-        ob = await exchange.get_orderbook("condition_id", OutcomeSide.YES)
+        ob = await exchange.fetch_orderbook("condition_id", OutcomeSide.YES)
         print(f"Best bid: {ob.best_bid}, Best ask: {ob.best_ask}")
 
         # Place order

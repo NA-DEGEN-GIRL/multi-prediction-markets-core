@@ -66,16 +66,16 @@ async def demo_market_data(exchange: Exchange) -> None:
     print(f"  Status: {market.status}")
     print(f"  End date: {market.end_date}")
 
-    # Get orderbook
-    orderbook = await exchange.get_orderbook(market.id, OutcomeSide.YES)
+    # Fetch orderbook
+    orderbook = await exchange.fetch_orderbook(market.id, OutcomeSide.YES)
     print(f"\nOrderbook (YES) for {market.id}:")
     print(f"  Best bid: {orderbook.best_bid}")
     print(f"  Best ask: {orderbook.best_ask}")
     print(f"  Mid price: {orderbook.mid_price}")
     print(f"  Spread: {orderbook.spread}")
 
-    # Get market price
-    price = await exchange.get_market_price(market.id, OutcomeSide.YES)
+    # Fetch market price
+    price = await exchange.fetch_market_price(market.id, OutcomeSide.YES)
     print(f"\nMarket price (YES):")
     print(f"  Mid: {price.mid_price}")
     print(f"  Implied probability: {exchange.price_to_probability(price.mid_price or Decimal(0)):.1%}")
@@ -142,25 +142,25 @@ async def demo_account(exchange: Exchange) -> None:
     """Demonstrate account operations."""
     print("\n=== Account ===")
 
-    # Get open orders
+    # Fetch open orders
     print("\nOpen orders:")
-    # orders = await exchange.get_open_orders()
+    # orders = await exchange.fetch_open_orders()
     # for order in orders:
     #     print(f"  {order.id}: {order.side} {order.size} @ {order.price}")
     print("  (Example output)")
 
-    # Get positions
+    # Fetch positions
     print("\nPositions:")
-    # position = await exchange.get_position("market_id", OutcomeSide.YES)
+    # position = await exchange.fetch_position("market_id", OutcomeSide.YES)
     # if position:
     #     print(f"  Size: {position.size}")
     #     print(f"  Avg price: {position.avg_price}")
     #     print(f"  Unrealized PnL: {position.unrealized_pnl}")
     print("  (Example output)")
 
-    # Get portfolio summary
+    # Fetch portfolio summary
     print("\nPortfolio summary:")
-    # summary = await exchange.get_portfolio_summary()
+    # summary = await exchange.fetch_portfolio_summary()
     # print(f"  Total value: ${summary.total_value}")
     # print(f"  Cash balance: ${summary.cash_balance}")
     # print(f"  Unrealized PnL: ${summary.unrealized_pnl}")

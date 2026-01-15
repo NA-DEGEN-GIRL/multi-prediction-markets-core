@@ -286,7 +286,7 @@ async def get_market_by_id(exchange, market_id: str) -> Market | None:
 async def view_orderbook_once(exchange, market: Market, outcome: OutcomeSide):
     """View orderbook once."""
     try:
-        orderbook = await exchange.get_orderbook(market.id, outcome)
+        orderbook = await exchange.fetch_orderbook(market.id, outcome)
         outcome_str = "YES" if outcome == OutcomeSide.YES else "NO"
         print_orderbook(orderbook, market.title, outcome_str, market)
     except Exception as e:
@@ -303,7 +303,7 @@ async def view_orderbook_continuous(exchange, market: Market, outcome: OutcomeSi
     try:
         while True:
             try:
-                orderbook = await exchange.get_orderbook(market.id, outcome, use_cache=False)
+                orderbook = await exchange.fetch_orderbook(market.id, outcome, use_cache=False)
                 print_orderbook(orderbook, market.title, outcome_str, market)
                 print(f"\n  [Refreshing in {interval:.0f} seconds... Press Ctrl+C to stop]")
                 await asyncio.sleep(interval)

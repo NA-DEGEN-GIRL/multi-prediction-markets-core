@@ -188,7 +188,7 @@ def select_outcome() -> OutcomeSide | None:
 async def show_orderbook(exchange, market_id: str, outcome: OutcomeSide):
     """Show current orderbook."""
     try:
-        orderbook = await exchange.get_orderbook(market_id, outcome)
+        orderbook = await exchange.fetch_orderbook(market_id, outcome)
         print(f"\n  현재 오더북 ({outcome.value}):")
         print(f"    Best Bid: {orderbook.best_bid or 'N/A'}")
         print(f"    Best Ask: {orderbook.best_ask or 'N/A'}")
@@ -202,7 +202,7 @@ async def show_orderbook(exchange, market_id: str, outcome: OutcomeSide):
 async def show_open_orders(exchange, market_id: str):
     """Show open orders and return them."""
     try:
-        orders = await exchange.get_open_orders(market_id)
+        orders = await exchange.fetch_open_orders(market_id)
         print(f"\n  Open Orders ({len(orders)}개):")
         if not orders:
             print("    (없음)")
@@ -219,7 +219,7 @@ async def show_open_orders(exchange, market_id: str):
 async def show_position(exchange, market_id: str, outcome: OutcomeSide):
     """Show position."""
     try:
-        position = await exchange.get_position(market_id, outcome)
+        position = await exchange.fetch_position(market_id, outcome)
         if position is None:
             print(f"\n  Position ({outcome.value}): 없음")
             return None

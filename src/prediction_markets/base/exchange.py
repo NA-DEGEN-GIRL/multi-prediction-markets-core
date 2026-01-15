@@ -246,7 +246,7 @@ class DefaultImplementationsMixin:
         Returns:
             Order if placed, None if no position
         """
-        position = await self.get_position(market_id, outcome)
+        position = await self.fetch_position(market_id, outcome)
         if not position or position.size <= 0:
             return None
 
@@ -328,28 +328,36 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
     has: dict[str, bool] = {
         "load_events": True,  # Load events with markets
         "search_events": True,  # Search events by keyword
-        "fetch_event": False,  # Fetch single event by ID (optional)
-        "get_market_price": True,
-        "get_orderbook": True,
-        "get_market_resolution": True,
+
+        "fetch_market_price": True,
+        "fetch_market_resolution": True,
+        "fetch_orderbook": True,        
+        "fetch_open_orders": True,
+        "fetch_position": True,
+        "fetch_portfolio_summary": True,
+
         "create_order": True,
         "create_order_batch": True,
         "cancel_orders": True,
-        "get_open_orders": True,
-        "get_position": True,
         "close_position": True,
-        "get_portfolio_summary": True,
+
         "split": True,
         "merge": True,
         "redeem": True,
+
         "calculate_fees": True,
+        
+        # === optional ===
+        "fetch_event": False,  # Fetch single event by ID
+        "fetch_categories": False,  # Fetch categories from exchange
+        "fetch_all_positions": False,
     }
 
     ws_supported: dict[str, bool] = {
-        "get_orderbook": False,
-        "get_market_price": False,
-        "get_open_orders": False,
-        "get_position": False,
+        "fetch_orderbook": False,
+        "fetch_market_price": False,
+        "fetch_open_orders": False,
+        "fetch_position": False,
     }
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -369,6 +377,7 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         self._initialized = False
         self._events: dict[str, Event] = {}  # event_id -> Event
         self._markets: dict[str, Market] = {}  # market_id -> Market (flat cache)
+        self._categories: list[dict[str, Any]] = []  # category list cache
         self._orderbooks: dict[str, dict[OutcomeSide, OrderBook]] = {}
         self._ws_connected = False
 
@@ -482,6 +491,17 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         """
         return self._markets
 
+    def get_categories(self) -> list[dict[str, Any]]:
+        """Return cached categories.
+
+        Returns:
+            list[dict[str, Any]]: List of category dicts with 'label', 'slug' fields
+
+        Note:
+            Call fetch_categories() first to populate cache.
+        """
+        return self._categories
+
     async def search_events(
         self,
         keyword: str,
@@ -526,13 +546,29 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         self._check_feature("fetch_event")
         raise NotImplementedError("fetch_event not implemented for this exchange")
 
-    async def get_orderbook(
+    async def fetch_categories(self, limit: int = 100) -> list[dict[str, Any]]:
+        """
+        Fetch categories from exchange and cache them.
+
+        Args:
+            limit: Maximum number of categories to fetch
+
+        Returns:
+            List of category dicts with 'label', 'slug' fields
+
+        Note:
+            Use get_categories() to access cached categories.
+        """
+        self._check_feature("fetch_categories")
+        raise NotImplementedError("fetch_categories not implemented for this exchange")
+
+    async def fetch_orderbook(
         self,
         market_id: str,
         outcome: OutcomeSide,
         use_cache: bool = True,
     ) -> OrderBook:
-        """Get orderbook for a market outcome."""
+        """Fetch orderbook for a market outcome."""
         self.get_market(market_id)
 
         if self.ws_enabled and self._ws_connected:
@@ -553,9 +589,9 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
 
         return await self._fetch_orderbook_rest(market_id, outcome)
 
-    async def get_market_price(self, market_id: str, outcome: OutcomeSide) -> MarketPrice:
-        """Get current market price."""
-        ob = await self.get_orderbook(market_id, outcome)
+    async def fetch_market_price(self, market_id: str, outcome: OutcomeSide) -> MarketPrice:
+        """Fetch current market price."""
+        ob = await self.fetch_orderbook(market_id, outcome)
 
         mid_price = None
         if ob.best_bid is not None and ob.best_ask is not None:
@@ -574,8 +610,8 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
             timestamp=ob.timestamp,
         )
 
-    async def get_market_resolution(self, market_id: str) -> Resolution | None:
-        """Get market resolution status (YES/NO/INVALID or None if not resolved)."""
+    async def fetch_market_resolution(self, market_id: str) -> Resolution | None:
+        """Fetch market resolution status (YES/NO/INVALID or None if not resolved)."""
         return await self._fetch_resolution(market_id)
 
     # === Trading ===
@@ -636,16 +672,16 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
 
     # === Account ===
 
-    async def get_open_orders(self, market_id: str | None = None) -> list[Order]:
-        """Get open orders."""
+    async def fetch_open_orders(self, market_id: str | None = None) -> list[Order]:
+        """Fetch open orders."""
         return await self._fetch_open_orders(market_id)
 
-    async def get_position(self, market_id: str, side: OutcomeSide | None = None) -> Position | None:
-        """Get position for a market."""
+    async def fetch_position(self, market_id: str, side: OutcomeSide | None = None) -> Position | None:
+        """Fetch position for a market."""
         return await self._fetch_position(market_id, side)
 
-    async def get_portfolio_summary(self) -> PortfolioSummary:
-        """Get portfolio summary."""
+    async def fetch_portfolio_summary(self) -> PortfolioSummary:
+        """Fetch portfolio summary."""
         return await self._fetch_portfolio_summary()
 
     # === Fees ===
@@ -664,7 +700,7 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         outcome: OutcomeSide,
     ) -> Decimal:
         """Convert USD to shares based on current price."""
-        price = await self.get_market_price(market_id, outcome)
+        price = await self.fetch_market_price(market_id, outcome)
 
         if side == OrderSide.BUY:
             ref_price = price.best_ask or price.mid_price

@@ -270,7 +270,7 @@ async def orderbook_example():
         # URL로 마켓 지정 가능
         market_url = "https://polymarket.com/event/bitcoin-above-on-january-12/bitcoin-above-92k-on-january-12"
 
-        ob = await exchange.get_orderbook(market_url)
+        ob = await exchange.fetch_orderbook(market_url)
         print(f"Best Bid: {ob.best_bid}")
         print(f"Best Ask: {ob.best_ask}")
         print(f"Spread: {ob.spread}")
@@ -331,7 +331,7 @@ async def position_example():
             print(f"  PnL: {pos.unrealized_pnl}")
 
         # 포트폴리오 요약
-        summary = await exchange.get_portfolio_summary()
+        summary = await exchange.fetch_portfolio_summary()
         print(f"\nTotal Value: ${summary.total_value}")
         print(f"Cash: ${summary.cash_balance}")
         print(f"Positions: ${summary.positions_value}")
@@ -380,17 +380,15 @@ async def event_markets_example():
     try:
         await exchange.init()
 
-        # 이벤트 URL 또는 slug로 조회
-        event = await exchange.get_event_markets(
-            "https://polymarket.com/event/portugal-presidential-election"
-        )
+        # 이벤트 slug로 조회
+        event = await exchange.fetch_event("portugal-presidential-election")
 
-        print(f"Event: {event['event_title']}")
-        print(f"Markets: {len(event['markets'])}")
+        print(f"Event: {event.title}")
+        print(f"Markets: {len(event.markets)}")
 
-        for m in event['markets']:
-            print(f"- {m['question']}")
-            print(f"  Condition ID: {m['conditionId']}")
+        for market in event.markets:
+            print(f"- {market.title}")
+            print(f"  ID: {market.id}")
 
     finally:
         await exchange.close()
@@ -421,20 +419,20 @@ python tests/test_polymarket.py
 - `load_markets()` - 최근 마켓 정보 로드
 - `search_markets(keyword, tag, limit)` - 마켓 검색
 - `fetch_market(market_id)` - URL/ID로 마켓 조회
-- `get_market_resolution(market_id)` - 해결 상태 조회
-- `get_orderbook(market_id, outcome)` - 오더북 조회
-- `get_market_price(market_id, outcome)` - 현재가 조회
-- `get_event_markets(url_or_slug)` - 이벤트의 마켓 목록
+- `fetch_market_resolution(market_id)` - 해결 상태 조회
+- `fetch_orderbook(market_id, outcome)` - 오더북 조회
+- `fetch_market_price(market_id, outcome)` - 현재가 조회
+- `fetch_event(slug)` - 이벤트 조회 (마켓 포함)
 
 #### 트레이딩
 - `create_order(...)` - 주문 생성
 - `cancel_orders(order_ids)` - 주문 취소
-- `get_open_orders()` - 미체결 주문 조회
+- `fetch_open_orders()` - 미체결 주문 조회
 
 #### 포지션/계정
 - `get_all_positions()` - 모든 포지션 조회
-- `get_position(market_id)` - 특정 마켓 포지션 조회
-- `get_portfolio_summary()` - 포트폴리오 요약
+- `fetch_position(market_id)` - 특정 마켓 포지션 조회
+- `fetch_portfolio_summary()` - 포트폴리오 요약
 
 #### Split/Merge (CTF)
 - `split_position(condition_id, amount)` - USDC를 YES+NO로 분할
@@ -684,20 +682,20 @@ asyncio.run(main())
 - `load_markets()` - Load recent markets
 - `search_markets(keyword, tag, limit)` - Search markets
 - `fetch_market(market_id)` - Get market by URL/ID
-- `get_market_resolution(market_id)` - Get resolution status
-- `get_orderbook(market_id, outcome)` - Get orderbook
-- `get_market_price(market_id, outcome)` - Get current price
-- `get_event_markets(url_or_slug)` - Get markets in an event
+- `fetch_market_resolution(market_id)` - Get resolution status
+- `fetch_orderbook(market_id, outcome)` - Get orderbook
+- `fetch_market_price(market_id, outcome)` - Get current price
+- `fetch_event(slug)` - Get event with its markets
 
 #### Trading
 - `create_order(...)` - Create a new order
 - `cancel_orders(order_ids)` - Cancel orders
-- `get_open_orders()` - Get open orders
+- `fetch_open_orders()` - Get open orders
 
 #### Positions/Account
 - `get_all_positions()` - Get all positions
-- `get_position(market_id)` - Get position for a market
-- `get_portfolio_summary()` - Get portfolio summary
+- `fetch_position(market_id)` - Get position for a market
+- `fetch_portfolio_summary()` - Get portfolio summary
 
 #### Split/Merge (CTF)
 - `split_position(condition_id, amount)` - Split USDC into YES+NO

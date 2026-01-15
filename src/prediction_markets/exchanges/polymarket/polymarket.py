@@ -116,8 +116,8 @@ class Polymarket(Exchange):
             # Get events (with their markets)
             events = await exchange.load_events()
 
-            # Get orderbook
-            ob = await exchange.get_orderbook("condition_id", OutcomeSide.YES)
+            # Fetch orderbook
+            ob = await exchange.fetch_orderbook("condition_id", OutcomeSide.YES)
 
             # Place order
             order = await exchange.create_order(
@@ -145,20 +145,22 @@ class Polymarket(Exchange):
     has = {
         "load_events": True,  # Load events with markets
         "search_events": True,  # Search events by keyword
+
         "fetch_event": True,  # Fetch single event by slug
-        "get_categories": True,
-        "get_market_price": True,
-        "get_orderbook": True,
+        "fetch_categories": True,
+        "fetch_market_price": True,
+        "fetch_orderbook": True,
+        "fetch_portfolio_summary": True,
+        "fetch_market_resolution": True,
+        "fetch_open_orders": True,
+        "fetch_position": True,
+
         "create_order": True,
         "create_order_batch": True,
         "cancel_orders": True,
-        "get_open_orders": True,
-        "get_position": True,
         "close_position": True,
-        "get_portfolio_summary": True,
-        "get_market_resolution": True,
+        
         "calculate_fees": True,
-        "websocket": True,
         # On-chain CTF contract operations (requires web3)
         "merge": True,
         "split": True,
@@ -167,10 +169,10 @@ class Polymarket(Exchange):
 
     # WebSocket supported features - real-time updates without polling
     ws_supported = {
-        "get_orderbook": True,  # Real-time orderbook via WS
-        "get_market_price": True,  # Derived from orderbook
-        "get_open_orders": False,  # REST only for now
-        "get_position": False,  # REST only
+        "fetch_orderbook": True,  # Real-time orderbook via WS
+        "fetch_market_price": True,  # Derived from orderbook
+        "fetch_open_orders": False,  # REST only for now
+        "fetch_position": False,  # REST only
     }
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -546,7 +548,7 @@ class Polymarket(Exchange):
 
         # Handle market orders - find price that can fill entire order
         if order_type == OrderType.MARKET or price is None:
-            orderbook = await self.get_orderbook(market_id, outcome)
+            orderbook = await self.fetch_orderbook(market_id, outcome)
             if side == OrderSide.BUY:
                 # BUY: sweep through asks to find price that fills order
                 price = self._calculate_market_buy_price(orderbook.asks, orderbook.bids, size)
@@ -789,7 +791,7 @@ class Polymarket(Exchange):
 
         URL format: https://polymarket.com/event/event-slug/market-slug
 
-        For event-only URLs, use get_event_markets() instead.
+        For event-only URLs, use fetch_event() instead.
 
         Args:
             url: Polymarket market URL
@@ -838,76 +840,10 @@ class Polymarket(Exchange):
         event_match = re.search(r"polymarket\.com/event/([^/?]+)/?$", url)
         if event_match:
             raise ValueError(
-                f"Event-only URL detected. Use get_event_markets() to list markets in this event."
+                f"Event-only URL detected. Use fetch_event() to get the event with its markets."
             )
 
         raise ValueError(f"Invalid Polymarket URL: {url}")
-
-    async def get_event_markets(self, url_or_slug: str) -> dict[str, Any]:
-        """
-        Get all markets in an event.
-
-        Args:
-            url_or_slug: Event URL or slug
-                - URL: https://polymarket.com/event/portugal-presidential-election
-                - Slug: portugal-presidential-election
-
-        Returns:
-            Dict with event info and markets:
-            {
-                "event_title": "Portugal Presidential Election",
-                "event_slug": "portugal-presidential-election",
-                "markets": [
-                    {
-                        "conditionId": "0x...",
-                        "slug": "andre-ventura-wins",
-                        "question": "André Ventura wins?",
-                        "outcomes": ["Yes", "No"],
-                        "active": True,
-                        "volume24hr": "12345.67",
-                    },
-                    ...
-                ]
-            }
-        """
-        import re
-
-        # Extract slug from URL if needed
-        url_match = re.search(r"polymarket\.com/event/([^/?]+)", url_or_slug)
-        if url_match:
-            event_slug = url_match.group(1)
-        else:
-            event_slug = url_or_slug
-
-        print(f"[{self.id}] Fetching event: {event_slug}")
-
-        # Fetch event by slug
-        event = await self._rest_client.get_event_by_slug(event_slug)
-
-        if not event:
-            raise ValueError(f"Event not found: {event_slug}")
-
-        event_title = event.get("title", event_slug)
-        markets = event.get("markets", [])
-
-        # Parse markets
-        market_list = []
-        for m in markets:
-            market_list.append({
-                "conditionId": m.get("conditionId"),
-                "slug": m.get("slug"),
-                "question": m.get("question", m.get("title", "")),
-                "outcomes": m.get("outcomes", ["Yes", "No"]),
-                "active": m.get("active", True),
-                "volume24hr": m.get("volume24hr"),
-                "raw": m,
-            })
-
-        return {
-            "event_title": event_title,
-            "event_slug": event_slug,
-            "markets": market_list,
-        }
 
     async def _resolve_market_id(self, market_id: str) -> str:
         """Resolve market_id to conditionId (handles URLs and slugs)."""
@@ -1294,9 +1230,9 @@ class Polymarket(Exchange):
 
         return events
 
-    async def get_categories(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def fetch_categories(self, limit: int = 100) -> list[dict[str, Any]]:
         """
-        Get all available categories (main categories like Crypto, Sports, Politics).
+        Fetch categories from exchange and cache them.
 
         Args:
             limit: Max categories to return
@@ -1304,15 +1240,23 @@ class Polymarket(Exchange):
         Returns:
             List of categories with 'label', 'slug' fields
 
+        Note:
+            Use get_categories() to access cached categories.
+
         Example:
-            categories = await exchange.get_categories()
+            categories = await exchange.fetch_categories()
             for cat in categories:
                 print(f"{cat['label']}: {cat['slug']}")
         """
         if self._rest_client is None:
             raise RuntimeError("REST client not initialized")
 
-        return await self._rest_client.get_categories(limit=limit)
+        categories = await self._rest_client.get_categories(limit=limit)
+
+        # Cache categories
+        self._categories = categories
+
+        return categories
 
     async def fetch_event(self, event_id: str) -> Event:
         """
