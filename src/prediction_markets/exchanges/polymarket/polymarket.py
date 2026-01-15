@@ -205,6 +205,10 @@ class Polymarket(Exchange):
         # Market token mapping with TTL: condition_id -> CachedTokens
         self._market_tokens: dict[str, CachedTokens] = {}
 
+        # Reverse mapping for WS updates: token_id -> (market_id, outcome)
+        # This is TTL-independent to ensure WS updates are never lost
+        self._token_to_market: dict[str, tuple[str, str]] = {}
+
     def _validate_config(self, config: dict[str, Any]) -> None:
         """
         Validate configuration values.
@@ -436,7 +440,7 @@ class Polymarket(Exchange):
                 if condition_id:
                     tokens = parse_market_tokens(raw_market)
                     if tokens:
-                        self._market_tokens[condition_id] = CachedTokens(tokens=tokens)
+                        self._cache_market_tokens(condition_id, tokens)
 
         return events
 
@@ -471,6 +475,22 @@ class Polymarket(Exchange):
             return {}
         return cached.tokens
 
+    def _cache_market_tokens(self, market_id: str, tokens: dict[str, str]) -> None:
+        """
+        Cache market tokens and update reverse mapping.
+
+        This ensures both forward (market_id -> tokens) and reverse
+        (token_id -> market_id, outcome) mappings are kept in sync.
+        The reverse mapping is used by WS handlers and is TTL-independent.
+
+        Args:
+            market_id: Market condition ID
+            tokens: Dict mapping outcome ("yes"/"no") to token_id
+        """
+        self._market_tokens[market_id] = CachedTokens(tokens=tokens)
+        for outcome, token_id in tokens.items():
+            self._token_to_market[token_id] = (market_id, outcome)
+
     async def _subscribe_orderbook(self, market_id: str) -> None:
         """Subscribe to orderbook updates via WebSocket."""
         if not self.ws_enabled:
@@ -488,7 +508,7 @@ class Polymarket(Exchange):
                 raw_market = await self._rest_client.get_market_clob(market_id)
                 tokens = parse_market_tokens(raw_market)
                 if tokens:
-                    self._market_tokens[market_id] = CachedTokens(tokens=tokens)
+                    self._cache_market_tokens(market_id, tokens)
                     token_ids = list(tokens.values())
             except Exception as e:
                 logger.warning(f"[{self.id}] Failed to fetch tokens for WS subscription: {e}")
@@ -517,22 +537,17 @@ class Polymarket(Exchange):
 
     async def _handle_orderbook_update(self, asset_id: str, data: dict[str, Any]) -> None:
         """Handle orderbook update from WebSocket."""
-        # Find market ID and outcome from token ID
-        market_id = None
-        outcome = None
-        for mid, cached in self._market_tokens.items():
-            tokens = cached.tokens if not cached.is_expired() else {}
-            for outcome_str, token_id in tokens.items():
-                if token_id == asset_id:
-                    market_id = mid
-                    outcome = OutcomeSide.YES if outcome_str == "yes" else OutcomeSide.NO
-                    break
-            if market_id:
-                break
+        # O(1) reverse lookup (TTL-independent)
+        mapping = self._token_to_market.get(asset_id)
+        if not mapping:
+            logger.debug(f"[{self.id}] Unknown token_id in WS update: {asset_id}")
+            return
 
-        if market_id and outcome:
-            orderbook = parse_orderbook(data, market_id)
-            self._update_orderbook_cache(market_id, outcome, orderbook)
+        market_id, outcome_str = mapping
+        outcome = OutcomeSide.YES if outcome_str == "yes" else OutcomeSide.NO
+
+        orderbook = parse_orderbook(data, market_id)
+        self._update_orderbook_cache(market_id, outcome, orderbook)
 
     # === Trading Implementation ===
 
@@ -759,7 +774,7 @@ class Polymarket(Exchange):
                 # Cache token IDs
                 tokens = parse_market_tokens(raw_market)
                 if tokens:
-                    self._market_tokens[market_id] = CachedTokens(tokens=tokens)
+                    self._cache_market_tokens(market_id, tokens)
                 return market
             except Exception as e:
                 print(f"[{self.id}] CLOB API failed for {market_id[:20]}...: {e}")
@@ -845,7 +860,7 @@ class Polymarket(Exchange):
                             # Cache token IDs with TTL
                             tokens = parse_market_tokens(market)
                             if tokens:
-                                self._market_tokens[condition_id] = CachedTokens(tokens=tokens)
+                                self._cache_market_tokens(condition_id, tokens)
                             return condition_id
 
             raise ValueError(f"Market not found for slug: {market_slug}")
@@ -899,7 +914,7 @@ class Polymarket(Exchange):
                 self._markets[condition_id] = parsed
                 tokens = parse_market_tokens(clob_market)
                 if tokens:
-                    self._market_tokens[condition_id] = CachedTokens(tokens=tokens)
+                    self._cache_market_tokens(condition_id, tokens)
                 print(f"[{self.id}] Market {condition_id[:16]}... neg_risk={neg_risk} (from CLOB API)")
                 return neg_risk
             except Exception as e:
@@ -1240,7 +1255,7 @@ class Polymarket(Exchange):
                 if condition_id:
                     tokens = parse_market_tokens(raw_market)
                     if tokens:
-                        self._market_tokens[condition_id] = CachedTokens(tokens=tokens)
+                        self._cache_market_tokens(condition_id, tokens)
 
         return events
 
@@ -1308,7 +1323,7 @@ class Polymarket(Exchange):
                 if raw_market.get("conditionId") == market.id:
                     tokens = parse_market_tokens(raw_market)
                     if tokens:
-                        self._market_tokens[market.id] = CachedTokens(tokens=tokens)
+                        self._cache_market_tokens(market.id, tokens)
                     break
 
         return event
