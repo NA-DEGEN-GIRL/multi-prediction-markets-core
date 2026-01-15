@@ -480,6 +480,20 @@ class Polymarket(Exchange):
         tokens = self._get_cached_tokens(market_id)
         token_ids = list(tokens.values())
 
+        # If cache miss or expired, fetch tokens from REST
+        if not token_ids:
+            if self._rest_client is None:
+                return
+            try:
+                raw_market = await self._rest_client.get_market_clob(market_id)
+                tokens = parse_market_tokens(raw_market)
+                if tokens:
+                    self._market_tokens[market_id] = CachedTokens(tokens=tokens)
+                    token_ids = list(tokens.values())
+            except Exception as e:
+                logger.warning(f"[{self.id}] Failed to fetch tokens for WS subscription: {e}")
+                return
+
         if not token_ids:
             return
 
@@ -511,7 +525,7 @@ class Polymarket(Exchange):
             for outcome_str, token_id in tokens.items():
                 if token_id == asset_id:
                     market_id = mid
-                    outcome = OutcomeSide.YES if outcome_str == "YES" else OutcomeSide.NO
+                    outcome = OutcomeSide.YES if outcome_str == "yes" else OutcomeSide.NO
                     break
             if market_id:
                 break
