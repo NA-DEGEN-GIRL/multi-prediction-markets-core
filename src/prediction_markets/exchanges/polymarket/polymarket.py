@@ -54,7 +54,6 @@ from prediction_markets.common.exceptions import (
 from prediction_markets.exchanges.polymarket.parser import (
     get_fee_structure,
     parse_event,
-    parse_events,
     parse_market,
     parse_market_tokens,
     parse_order,
@@ -146,7 +145,6 @@ class Polymarket(Exchange):
     has = {
         "load_events": True,  # Load events with markets
         "search_events": True,  # Search events by keyword
-        "get_events": True,  # Event listing with filters
         "fetch_event": True,  # Fetch single event by slug
         "get_categories": True,
         "get_market_price": True,
@@ -1280,6 +1278,9 @@ class Polymarket(Exchange):
 
             events.append(event)
 
+            # Cache event (add to existing, don't replace)
+            self._events[event.id] = event
+
             # Cache markets and tokens
             for market in event.markets:
                 self._markets[market.id] = market
@@ -1313,58 +1314,6 @@ class Polymarket(Exchange):
 
         return await self._rest_client.get_categories(limit=limit)
 
-    async def get_events(
-        self,
-        category: str | None = None,
-        active: bool = True,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[Event]:
-        """
-        Get events from Polymarket.
-
-        Events group related markets. For example, "Bitcoin Price Predictions"
-        contains multiple BTC price threshold markets.
-
-        Args:
-            category: Filter by category (not yet implemented for Polymarket)
-            active: Include only active events (default True)
-            limit: Maximum events to return
-            offset: Pagination offset
-
-        Returns:
-            List of Event objects with their markets
-
-        Example:
-            events = await exchange.get_events(limit=10)
-            for event in events:
-                print(f"{event.title}: {len(event.markets)} markets")
-        """
-        if self._rest_client is None:
-            raise RuntimeError("REST client not initialized")
-
-        raw_events = await self._rest_client.get_events(
-            limit=limit,
-            offset=offset,
-            active=active,
-            closed=not active,
-        )
-        events = parse_events(raw_events)
-
-        # Cache markets and tokens from events
-        for event in events:
-            for market in event.markets:
-                self._markets[market.id] = market
-                # Cache tokens if available from raw data
-                for raw_market in event.raw.get("markets", []):
-                    if raw_market.get("conditionId") == market.id:
-                        tokens = parse_market_tokens(raw_market)
-                        if tokens:
-                            self._market_tokens[market.id] = CachedTokens(tokens=tokens)
-                        break
-
-        return events
-
     async def fetch_event(self, event_id: str) -> Event:
         """
         Fetch single event by slug from exchange.
@@ -1390,6 +1339,9 @@ class Polymarket(Exchange):
             raise ValueError(f"Event not found: {event_id}")
 
         event = parse_event(raw_event)
+
+        # Cache event
+        self._events[event.id] = event
 
         # Cache markets and tokens
         for market in event.markets:

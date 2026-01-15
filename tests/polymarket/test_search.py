@@ -13,7 +13,12 @@ import asyncio
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+# Load .env from core folder
+from dotenv import load_dotenv
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(env_path)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from prediction_markets import create_exchange, Event, Market
 
@@ -176,7 +181,6 @@ async def interactive_search():
 
   기본 정보:
     - ID: {selected_market.id}
-    - Exchange ID: {selected_market.exchange_id}
     - Slug: {selected_market.slug}
     - 상태: {selected_market.status.value if selected_market.status else 'N/A'}
     - 카테고리: {selected_market.category or 'N/A'}

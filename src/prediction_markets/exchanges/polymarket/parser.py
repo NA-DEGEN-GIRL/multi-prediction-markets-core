@@ -74,7 +74,6 @@ def parse_market(data: dict[str, Any]) -> Market:
 
     return Market(
         id=condition_id,
-        exchange_id=condition_id,
         exchange="polymarket",
         slug=data.get("slug", data.get("market_slug", "")),
         title=data.get("question", data.get("title", "")),
@@ -230,9 +229,7 @@ def parse_event(data: dict[str, Any]) -> Event:
 
     return Event(
         id=event_slug,
-        exchange_id=str(data.get("id", "")),
         exchange="polymarket",
-        slug=event_slug,
         title=event_title,
         description=data.get("description", ""),
         category=data.get("category", ""),

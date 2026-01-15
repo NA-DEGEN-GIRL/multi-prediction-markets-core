@@ -146,8 +146,7 @@ class MarketPrice:
 class Market:
     """Market information."""
 
-    id: str  # Internal unified ID
-    exchange_id: str  # Exchange-specific ID
+    id: str  # Primary identifier (e.g., conditionId for Polymarket)
     exchange: str  # Exchange name
     slug: str  # URL-friendly identifier
     title: str  # Human-readable title
@@ -178,10 +177,8 @@ class Event:
         - "BTC > $150k by March?" Market
     """
 
-    id: str  # Event ID (typically slug)
-    exchange_id: str  # Exchange-specific ID
+    id: str  # Primary identifier (typically slug for URL-friendly access)
     exchange: str  # Exchange name
-    slug: str  # URL-friendly identifier (polymarket.com/event/{slug})
     title: str  # Human-readable title
     description: str
     category: str

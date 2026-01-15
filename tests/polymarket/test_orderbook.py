@@ -15,10 +15,14 @@ import os
 import sys
 import random
 from pathlib import Path
-from datetime import datetime
 from decimal import Decimal
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+# Load .env from core folder
+from dotenv import load_dotenv
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(env_path)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from prediction_markets import create_exchange, OrderBook, OutcomeSide, MarketStatus, Market
 
@@ -195,7 +199,7 @@ async def select_random_market(exchange) -> Market | None:
 
 
 async def search_and_select_market(exchange) -> Market | None:
-    """Search markets and let user select one."""
+    """Search events and let user select event -> market."""
     keyword = input("\n  Enter search keyword: ").strip()
     if not keyword:
         print("  [!] Keyword cannot be empty.")
@@ -204,43 +208,58 @@ async def search_and_select_market(exchange) -> Market | None:
     print(f"\n  Searching for '{keyword}'...")
 
     try:
-        events = await exchange.search_events(keyword, limit=20)
+        events = await exchange.search_events(keyword, limit=10)
     except Exception as e:
         print(f"\n  [!] Search failed: {e}")
         return None
 
     if not events:
-        print(f"\n  [!] No markets found for '{keyword}'")
+        print(f"\n  [!] No events found for '{keyword}'")
         return None
 
-    # Collect all markets from events
-    all_markets = []
-    for event in events:
-        for market in event.markets:
-            all_markets.append((event.title, market))
+    # Step 1: Display events
+    total_markets = sum(len(e.markets) for e in events)
+    print(f"\n  Found {len(events)} events ({total_markets} markets):\n")
+    for i, event in enumerate(events, 1):
+        status = event.status.value if event.status else "?"
+        title_display = event.title[:45] if len(event.title) <= 45 else event.title[:42] + "..."
+        print(f"  {i:>2}. [{status:>8}] {title_display} ({len(event.markets)} markets)")
 
-    if not all_markets:
-        print(f"\n  [!] No markets found in events")
+    # Step 2: Select event
+    try:
+        choice = input("\n  Select event number (or 0 to cancel): ").strip()
+        event_idx = int(choice) - 1
+        if event_idx == -1:
+            return None
+        if not (0 <= event_idx < len(events)):
+            print("  [!] Invalid selection.")
+            return None
+    except ValueError:
+        print("  [!] Invalid input.")
         return None
 
-    # Display markets
-    print(f"\n  Found {len(all_markets)} markets:\n")
-    for i, (event_title, market) in enumerate(all_markets[:15], 1):
+    selected_event = events[event_idx]
+    print(f"\n  Event: {selected_event.title[:55]}...")
+
+    if not selected_event.markets:
+        print("  [!] No markets in this event.")
+        return None
+
+    # Step 3: Display markets in selected event
+    print(f"\n  Markets in this event ({len(selected_event.markets)}):\n")
+    for i, market in enumerate(selected_event.markets, 1):
         status = market.status.value if market.status else "?"
-        title_display = market.title[:45] if len(market.title) <= 45 else market.title[:42] + "..."
+        title_display = market.title[:50] if len(market.title) <= 50 else market.title[:47] + "..."
         print(f"  {i:>2}. [{status:>8}] {title_display}")
 
-    if len(all_markets) > 15:
-        print(f"\n  ... and {len(all_markets) - 15} more")
-
-    # Let user select
+    # Step 4: Select market
     try:
         choice = input("\n  Select market number (or 0 to cancel): ").strip()
-        idx = int(choice) - 1
-        if idx == -1:
+        market_idx = int(choice) - 1
+        if market_idx == -1:
             return None
-        if 0 <= idx < len(all_markets):
-            _, market = all_markets[idx]
+        if 0 <= market_idx < len(selected_event.markets):
+            market = selected_event.markets[market_idx]
             print(f"\n  Selected: {market.title[:60]}...")
             return market
         else:

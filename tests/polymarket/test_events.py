@@ -14,8 +14,13 @@ import asyncio
 import sys
 from pathlib import Path
 
+# Load .env from core folder
+from dotenv import load_dotenv
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(env_path)
+
 # Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from prediction_markets import create_exchange, Event, EventStatus
 
@@ -42,7 +47,7 @@ def print_event_summary(event: Event, index: int | None = None) -> None:
     print(f"  {prefix}{status_str} {title}")
     print(f"     |-- 마켓 수: {len(event.markets)}개")
     print(f"     |-- 카테고리: {event.category or 'N/A'}")
-    print(f"     |-- slug: {event.slug}")
+    print(f"     |-- ID: {event.id}")
     if event.volume_24h:
         print(f"     |-- 24h 거래량: ${event.volume_24h:,.2f}")
 
@@ -51,10 +56,8 @@ def print_event_detail(event: Event) -> None:
     """Print detailed event information."""
     print(f"\n이벤트: {event.title}")
     print(f"  ID: {event.id}")
-    print(f"  Exchange ID: {event.exchange_id}")
     print(f"  상태: {event.status.value}")
     print(f"  카테고리: {event.category or 'N/A'}")
-    print(f"  slug: {event.slug}")
 
     if event.description:
         desc = event.description[:200] + "..." if len(event.description) > 200 else event.description
@@ -243,11 +246,11 @@ async def test_all() -> None:
 
     # 3. Fetch single event
     if events:
-        # Get first event slug
+        # Get first event ID (slug)
         first_event = list(events.values())[0]
-        slug = first_event.slug
-        print(f"\n첫 번째 이벤트 slug 사용: {slug}")
-        await test_fetch_event(slug)
+        event_id = first_event.id
+        print(f"\n첫 번째 이벤트 ID 사용: {event_id}")
+        await test_fetch_event(event_id)
     else:
         await test_fetch_event()
 

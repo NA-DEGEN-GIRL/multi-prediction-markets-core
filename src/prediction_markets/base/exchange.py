@@ -328,7 +328,6 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
     has: dict[str, bool] = {
         "load_events": True,  # Load events with markets
         "search_events": True,  # Search events by keyword
-        "get_events": False,  # Event listing with filters (optional)
         "fetch_event": False,  # Fetch single event by ID (optional)
         "get_market_price": True,
         "get_orderbook": True,
@@ -370,7 +369,6 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         self._initialized = False
         self._events: dict[str, Event] = {}  # event_id -> Event
         self._markets: dict[str, Market] = {}  # market_id -> Market (flat cache)
-        self._markets_by_exchange_id: dict[str, str] = {}
         self._orderbooks: dict[str, dict[OutcomeSide, OrderBook]] = {}
         self._ws_connected = False
 
@@ -437,14 +435,12 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
 
         self._events.clear()
         self._markets.clear()
-        self._markets_by_exchange_id.clear()
 
         for event in events:
             self._events[event.id] = event
             # Also populate flat market cache
             for market in event.markets:
                 self._markets[market.id] = market
-                self._markets_by_exchange_id[market.exchange_id] = market.id
 
         return self._events
 
@@ -463,6 +459,28 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
                 market_id=market_id,
             )
         return self._markets[market_id]
+
+    def get_events(self) -> dict[str, Event]:
+        """Return all cached events.
+
+        Returns:
+            dict[str, Event]: Event ID -> Event mapping
+
+        Note:
+            Call load_events() or search_events() first to populate cache.
+        """
+        return self._events
+
+    def get_markets(self) -> dict[str, Market]:
+        """Return all cached markets.
+
+        Returns:
+            dict[str, Market]: Market ID -> Market mapping
+
+        Note:
+            Call load_events() or search_events() first to populate cache.
+        """
+        return self._markets
 
     async def search_events(
         self,
@@ -490,34 +508,6 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         """
         self._check_feature("search_events")
         raise NotImplementedError("search_events not implemented for this exchange")
-
-    async def get_events(
-        self,
-        category: str | None = None,
-        active: bool = True,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[Event]:
-        """
-        Get events with optional filtering.
-
-        Events group related markets (e.g., "Bitcoin Price Predictions" contains
-        multiple BTC price threshold markets).
-
-        Args:
-            category: Filter by category (optional)
-            active: Include only active events (default True)
-            limit: Maximum events to return
-            offset: Pagination offset
-
-        Returns:
-            List of Event objects with their markets
-
-        Raises:
-            UnsupportedFeatureError: If exchange doesn't support events
-        """
-        self._check_feature("get_events")
-        raise NotImplementedError("get_events not implemented for this exchange")
 
     async def fetch_event(self, event_id: str) -> Event:
         """
