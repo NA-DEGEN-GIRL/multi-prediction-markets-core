@@ -1389,6 +1389,148 @@ class Polymarket(Exchange):
 
         return events
 
+    async def filter_events(
+        self,
+        *,
+        # Pagination & sorting
+        limit: int = 100,
+        offset: int = 0,
+        order: str | None = None,
+        ascending: bool = False,
+        # Status filters
+        active: bool | None = True,
+        closed: bool | None = False,
+        archived: bool | None = None,
+        featured: bool | None = None,
+        # Tag filters
+        tag_id: int | None = None,
+        tag_slug: str | None = None,
+        exclude_tag_id: list[int] | None = None,
+        # Value range filters
+        liquidity_min: float | None = None,
+        liquidity_max: float | None = None,
+        volume_min: float | None = None,
+        volume_max: float | None = None,
+        # Date range filters (ISO format or datetime)
+        start_date_min: str | None = None,
+        start_date_max: str | None = None,
+        end_date_min: str | None = None,
+        end_date_max: str | None = None,
+    ) -> list[Event]:
+        """
+        Filter events with advanced query options.
+
+        Provides fine-grained control over event filtering including
+        volume, liquidity, date ranges, and tags.
+
+        Args:
+            limit: Max events to return (default 100)
+            offset: Pagination offset
+            order: Field to order by (e.g., "volume", "liquidity", "endDate")
+            ascending: Sort order (default: descending)
+
+            active: Filter active events (default: True)
+            closed: Filter closed events (default: False)
+            archived: Filter archived events
+            featured: Filter featured events only
+
+            tag_id: Filter by tag ID
+            tag_slug: Filter by tag slug (e.g., "crypto", "politics")
+            exclude_tag_id: Exclude specific tag IDs
+
+            liquidity_min/max: Liquidity range filter (in USD)
+            volume_min/max: Volume range filter (in USD)
+
+            start_date_min/max: Start date range (ISO format: "2026-01-01T00:00:00Z")
+            end_date_min/max: End date range (ISO format)
+
+        Returns:
+            List of Event objects with their markets
+
+        Example:
+            # High volume active events
+            events = await exchange.filter_events(
+                volume_min=100000,
+                order="volume",
+                limit=20
+            )
+
+            # Events ending in the next week
+            from datetime import datetime, timedelta, timezone
+            next_week = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+            events = await exchange.filter_events(
+                end_date_max=next_week,
+                order="endDate",
+                ascending=True
+            )
+
+            # Crypto events with high liquidity
+            events = await exchange.filter_events(
+                tag_slug="crypto",
+                liquidity_min=50000
+            )
+        """
+        if self._rest_client is None:
+            raise RuntimeError("REST client not initialized")
+
+        raw_events = await self._rest_client.filter_events(
+            limit=limit,
+            offset=offset,
+            order=order,
+            ascending=ascending,
+            active=active,
+            closed=closed,
+            archived=archived,
+            featured=featured,
+            tag_id=tag_id,
+            tag_slug=tag_slug,
+            exclude_tag_id=exclude_tag_id,
+            liquidity_min=liquidity_min,
+            liquidity_max=liquidity_max,
+            volume_min=volume_min,
+            volume_max=volume_max,
+            start_date_min=start_date_min,
+            start_date_max=start_date_max,
+            end_date_min=end_date_min,
+            end_date_max=end_date_max,
+        )
+
+        events: list[Event] = []
+        for raw_event in raw_events:
+            event = parse_event(raw_event)
+            events.append(event)
+
+            # Cache event and markets
+            self._events[event.id] = event
+            for market in event.markets:
+                self._markets[market.id] = market
+
+            # Cache tokens
+            for raw_market in raw_event.get("markets", []):
+                condition_id = raw_market.get("conditionId", raw_market.get("condition_id"))
+                if condition_id:
+                    tokens = parse_market_tokens(raw_market)
+                    if tokens:
+                        self._cache_market_tokens(condition_id, tokens)
+
+        # Client-side sorting (API order parameter is unreliable)
+        if order:
+            order_field = order.split(",")[0].strip()  # Use first field if multiple
+            if order_field == "volume":
+                events.sort(key=lambda e: e.volume or 0, reverse=not ascending)
+            elif order_field == "volume24hr":
+                events.sort(key=lambda e: e.volume_24h or 0, reverse=not ascending)
+            elif order_field == "liquidity":
+                events.sort(key=lambda e: e.liquidity or 0, reverse=not ascending)
+            elif order_field == "endDate":
+                # None dates go to the end
+                events.sort(
+                    key=lambda e: (e.end_date is None, e.end_date),
+                    reverse=not ascending
+                )
+
+        return events
+
     async def fetch_categories(self, limit: int = 100) -> list[dict[str, Any]]:
         """
         Fetch categories from exchange and cache them.

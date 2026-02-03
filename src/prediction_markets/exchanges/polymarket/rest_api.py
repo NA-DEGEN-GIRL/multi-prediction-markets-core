@@ -542,6 +542,153 @@ class PolymarketRestClient:
         }
         return await self._request("GET", f"{self.GAMMA_URL}/events", params=params)
 
+    async def filter_events(
+        self,
+        *,
+        # Pagination & sorting
+        limit: int = 100,
+        offset: int = 0,
+        order: str | None = None,
+        ascending: bool = False,
+        # Status filters
+        active: bool | None = True,
+        closed: bool | None = False,
+        archived: bool | None = None,
+        featured: bool | None = None,
+        # Tag filters
+        tag_id: int | None = None,
+        tag_slug: str | None = None,
+        exclude_tag_id: list[int] | None = None,
+        related_tags: bool | None = None,
+        # Value range filters
+        liquidity_min: float | None = None,
+        liquidity_max: float | None = None,
+        volume_min: float | None = None,
+        volume_max: float | None = None,
+        # Date range filters (ISO format: "2026-01-01T00:00:00Z")
+        start_date_min: str | None = None,
+        start_date_max: str | None = None,
+        end_date_min: str | None = None,
+        end_date_max: str | None = None,
+        # Other filters
+        slug: list[str] | None = None,
+        recurrence: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Filter events with advanced query parameters.
+
+        Uses the Gamma API /events endpoint with comprehensive filtering options.
+
+        Args:
+            limit: Max events per request (default 100)
+            offset: Pagination offset
+            order: Comma-separated fields to order by (e.g., "volume", "liquidity")
+            ascending: Sort order (default: descending)
+
+            active: Filter active events (True/False/None for any)
+            closed: Filter closed events
+            archived: Filter archived events
+            featured: Filter featured events
+
+            tag_id: Filter by tag ID
+            tag_slug: Filter by tag slug
+            exclude_tag_id: Exclude specific tag IDs
+            related_tags: Include related tags
+
+            liquidity_min/max: Liquidity range filter
+            volume_min/max: Volume range filter
+
+            start_date_min/max: Start date range (ISO format)
+            end_date_min/max: End date range (ISO format)
+
+            slug: Filter by specific slugs
+            recurrence: Filter by recurrence pattern
+
+        Returns:
+            List of event dicts from Gamma API
+
+        Example:
+            # High volume events
+            events = await client.filter_events(
+                active=True,
+                volume_min=100000,
+                order="volume",
+                limit=20
+            )
+
+            # Events ending soon
+            events = await client.filter_events(
+                active=True,
+                end_date_max="2026-02-10T00:00:00Z",
+                order="endDate"
+            )
+
+            # Crypto events with high liquidity
+            events = await client.filter_events(
+                tag_slug="crypto",
+                liquidity_min=50000,
+                active=True
+            )
+        """
+        params: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+        }
+
+        # Sorting
+        if order:
+            params["order"] = order
+        if ascending:
+            params["ascending"] = "true"
+
+        # Status filters (only add if explicitly set)
+        if active is not None:
+            params["active"] = str(active).lower()
+        if closed is not None:
+            params["closed"] = str(closed).lower()
+        if archived is not None:
+            params["archived"] = str(archived).lower()
+        if featured is not None:
+            params["featured"] = str(featured).lower()
+
+        # Tag filters
+        if tag_id is not None:
+            params["tag_id"] = tag_id
+        if tag_slug:
+            params["tag_slug"] = tag_slug
+        if exclude_tag_id:
+            params["exclude_tag_id"] = exclude_tag_id
+        if related_tags is not None:
+            params["related_tags"] = str(related_tags).lower()
+
+        # Value range filters
+        if liquidity_min is not None:
+            params["liquidity_min"] = liquidity_min
+        if liquidity_max is not None:
+            params["liquidity_max"] = liquidity_max
+        if volume_min is not None:
+            params["volume_min"] = volume_min
+        if volume_max is not None:
+            params["volume_max"] = volume_max
+
+        # Date range filters
+        if start_date_min:
+            params["start_date_min"] = start_date_min
+        if start_date_max:
+            params["start_date_max"] = start_date_max
+        if end_date_min:
+            params["end_date_min"] = end_date_min
+        if end_date_max:
+            params["end_date_max"] = end_date_max
+
+        # Other filters
+        if slug:
+            params["slug"] = slug
+        if recurrence:
+            params["recurrence"] = recurrence
+
+        return await self._request("GET", f"{self.GAMMA_URL}/events", params=params)
+
     async def get_event_by_slug(self, slug: str) -> dict[str, Any] | None:
         """
         Get event by slug from Gamma API.

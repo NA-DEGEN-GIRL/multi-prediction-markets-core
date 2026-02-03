@@ -189,7 +189,8 @@ class Event:
     start_date: datetime | None = None
     end_date: datetime | None = None
 
-    volume_24h: Decimal | None = None  # Total event volume
+    volume: Decimal | None = None  # Total cumulative volume
+    volume_24h: Decimal | None = None  # 24-hour volume
     liquidity: Decimal | None = None  # Total event liquidity
 
     image_url: str | None = None
