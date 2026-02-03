@@ -49,7 +49,12 @@ Configuration:
     - builder_passphrase: Builder API passphrase
 """
 
-from prediction_markets.exchanges.polymarket.polymarket import Polymarket
+from prediction_markets.exchanges.polymarket.polymarket import (
+    Polymarket,
+    get_15m_market_id,
+    get_current_15m_market_id,
+    get_next_15m_market_id,
+)
 from prediction_markets.exchanges.polymarket.rest_api import (
     ApiCreds,
     PolymarketRestClient,
@@ -79,6 +84,10 @@ from prediction_markets.exchanges.polymarket.constants import (
 __all__ = [
     # Main exchange class
     "Polymarket",
+    # 15-minute market utilities
+    "get_15m_market_id",
+    "get_current_15m_market_id",
+    "get_next_15m_market_id",
     # REST API
     "PolymarketRestClient",
     "ApiCreds",

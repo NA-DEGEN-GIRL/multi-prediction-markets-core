@@ -532,6 +532,7 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
         keyword: str,
         limit: int = 50,
         tag: str | None = None,
+        include_closed: bool = False,
     ) -> list[Event]:
         """
         Search events by keyword.
@@ -542,14 +543,17 @@ class Exchange(ExchangeBase, DefaultImplementationsMixin):
             keyword: Search keyword
             limit: Maximum events to return
             tag: Optional category tag filter
+            include_closed: Include closed/resolved events (default: False)
 
         Returns:
             List of Event objects with their markets
 
-        Note:
-            Only active events with active markets are returned.
-            Closed/resolved markets are filtered out as they are
-            only needed for position redemption.
+        Example:
+            # Search active events only (default)
+            events = await exchange.search_events("bitcoin")
+
+            # Include closed events
+            events = await exchange.search_events("bitcoin", include_closed=True)
         """
         self._check_feature("search_events")
         raise NotImplementedError("search_events not implemented for this exchange")

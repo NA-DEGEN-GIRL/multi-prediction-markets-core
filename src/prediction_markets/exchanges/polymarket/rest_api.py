@@ -563,27 +563,40 @@ class PolymarketRestClient:
             return None
 
     async def search_markets(
-        self, keyword: str = "", limit: int = 20, tag: str | None = None
+        self,
+        keyword: str = "",
+        limit: int = 20,
+        page: int = 1,
+        tag: str | None = None,
+        keep_closed_markets: bool = False,
+        events_status: str | None = None,
     ) -> dict[str, Any]:
         """
         Search markets using /public-search endpoint.
 
         Args:
             keyword: Search keyword (empty string to list all in a category)
-            limit: Max results per type
+            limit: Max results per type (limit_per_type)
+            page: Page number for pagination (1-indexed)
             tag: Optional category/tag filter (slug from get_categories)
+            keep_closed_markets: Include closed markets (default: False)
+            events_status: Filter by event status (e.g., "active", "closed")
 
         Returns:
-            Dict with 'events', 'tags', 'profiles' keys
+            Dict with 'events', 'tags', 'profiles', 'pagination' keys
         """
         # q is required, use space if empty to get category listings
         query = keyword if keyword.strip() else " "
         params: dict[str, Any] = {
             "q": query,
             "limit_per_type": limit,
+            "page": page,
+            "keep_closed_markets": 1 if keep_closed_markets else 0,
         }
         if tag:
             params["events_tag"] = tag
+        if events_status:
+            params["events_status"] = events_status
         return await self._request("GET", f"{self.GAMMA_URL}/public-search", params=params)
 
     async def get_categories(self, limit: int = 100) -> list[dict[str, Any]]:

@@ -36,6 +36,38 @@ from prediction_markets.base.types import (
 )
 
 
+# === Helper Functions ===
+
+
+def _parse_tags(tags: list[Any] | None) -> list[str]:
+    """
+    Parse tags from API response.
+
+    Handles both formats:
+    - List of strings: ["tag1", "tag2"]
+    - List of dicts: [{"label": "tag1"}, {"slug": "tag2"}]
+
+    Args:
+        tags: Raw tags from API
+
+    Returns:
+        List of tag strings
+    """
+    if not tags:
+        return []
+
+    result = []
+    for tag in tags:
+        if isinstance(tag, str):
+            result.append(tag)
+        elif isinstance(tag, dict):
+            # Try common key names for tag value
+            tag_value = tag.get("label") or tag.get("slug") or tag.get("name") or tag.get("tag")
+            if tag_value:
+                result.append(str(tag_value))
+    return result
+
+
 # === Market Parsing (Gamma API) ===
 
 
@@ -239,7 +271,7 @@ def parse_event(data: dict[str, Any]) -> Event:
         volume_24h=parse_decimal(data.get("volume24hr", data.get("volume"))),
         liquidity=parse_decimal(data.get("liquidity")),
         image_url=data.get("image"),
-        tags=data.get("tags", []) or [],
+        tags=_parse_tags(data.get("tags", [])),
         created_at=parse_datetime(data.get("created_at")),
         raw=data,
     )

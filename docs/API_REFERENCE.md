@@ -118,6 +118,7 @@ async def search_events(
     keyword: str,
     limit: int = 50,
     tag: str | None = None,
+    include_closed: bool = False,
 ) -> list[Event]
     """Search events by keyword.
 
@@ -125,6 +126,14 @@ async def search_events(
         keyword: Search term
         limit: Max results
         tag: Optional category filter
+        include_closed: Include closed/resolved events (default: False)
+
+    Example:
+        # Active events only (default)
+        events = await exchange.search_events("bitcoin")
+
+        # Include closed events
+        events = await exchange.search_events("bitcoin", include_closed=True)
     """
 
 async def fetch_orderbook(

@@ -21,6 +21,11 @@ load_dotenv(env_path)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from prediction_markets import create_exchange, Event, Market
+from prediction_markets.exchanges.polymarket import (
+    get_15m_market_id,
+    get_current_15m_market_id,
+    get_next_15m_market_id,
+)
 
 
 def truncate(text: str, max_len: int = 50) -> str:
@@ -254,6 +259,110 @@ async def show_event_structure():
                 print(f"   └── ... (+{len(event.markets) - 2}개)")
 
 
+async def test_15m_market():
+    """
+    Test 15-minute up/down market lookup.
+
+    Uses the utility functions to get current/next 15m market IDs
+    and fetches the market data.
+    """
+    from datetime import datetime, timezone
+
+    print_header("15분 마켓 조회")
+
+    # Available coins
+    coins = ["btc", "eth", "sol", "doge", "xrp"]
+
+    print("\n지원 코인:")
+    for i, coin in enumerate(coins, 1):
+        print(f"  {i}. {coin.upper()}")
+    print(f"  {len(coins) + 1}. 직접 입력")
+
+    choice = input(f"\n코인 선택 (1-{len(coins) + 1}, Enter=btc): ").strip()
+
+    if not choice:
+        coin = "btc"
+    elif choice == str(len(coins) + 1):
+        coin = input("코인 심볼 입력: ").strip().lower()
+    else:
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(coins):
+                coin = coins[idx]
+            else:
+                coin = "btc"
+        except ValueError:
+            coin = "btc"
+
+    # Show current time and market IDs
+    now = datetime.now(timezone.utc)
+    current_id = get_current_15m_market_id(coin)
+    next_id = get_next_15m_market_id(coin)
+
+    print(f"\n현재 UTC 시간: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"코인: {coin.upper()}")
+    print(f"\n현재 15분 마켓 ID: {current_id}")
+    print(f"다음 15분 마켓 ID: {next_id}")
+
+    # Menu for which market to fetch
+    print("\n조회 옵션:")
+    print("  1. 현재 15분 마켓")
+    print("  2. 다음 15분 마켓")
+    print("  3. 특정 시간 마켓")
+
+    fetch_choice = input("\n선택 (1-3, Enter=1): ").strip() or "1"
+
+    if fetch_choice == "3":
+        print("\n시간 입력 (UTC 기준)")
+        try:
+            year = int(input("  년 (Enter=2026): ").strip() or "2026")
+            month = int(input("  월 (1-12): ").strip())
+            day = int(input("  일 (1-31): ").strip())
+            hour = int(input("  시 (0-23): ").strip())
+            minute = int(input("  분 (0-59): ").strip())
+            dt = datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+            market_id = get_15m_market_id(coin, dt)
+        except ValueError as e:
+            print(f"잘못된 입력: {e}")
+            return
+    elif fetch_choice == "2":
+        market_id = next_id
+    else:
+        market_id = current_id
+
+    print(f"\n조회할 마켓 ID: {market_id}")
+    print("-" * 50)
+
+    # Fetch the market
+    async with create_exchange("polymarket") as exchange:
+        try:
+            event = await exchange.fetch_event(market_id)
+
+            print(f"\n📁 이벤트: {event.title}")
+            print(f"   ID: {event.id}")
+            print(f"   상태: {event.status.value if event.status else 'N/A'}")
+            print(f"   카테고리: {event.category or 'N/A'}")
+
+            if event.end_date:
+                print(f"   종료: {event.end_date}")
+            if event.volume_24h:
+                print(f"   24h 거래량: ${event.volume_24h:,.2f}")
+            if event.liquidity:
+                print(f"   유동성: ${event.liquidity:,.2f}")
+
+            print(f"\n   마켓 ({len(event.markets)}개):")
+            for market in event.markets:
+                status = market.status.value if market.status else "unknown"
+                print(f"   └── [{status}] {market.title}")
+                print(f"       ID: {market.id}")
+                if market.liquidity:
+                    print(f"       유동성: ${market.liquidity:,.2f}")
+
+        except Exception as e:
+            print(f"\n❌ 마켓 조회 실패: {e}")
+            print("   (마켓이 아직 생성되지 않았거나 존재하지 않을 수 있습니다)")
+
+
 async def main():
     """Main menu."""
     print_header("Polymarket 검색 테스트")
@@ -261,8 +370,8 @@ async def main():
     print("""
   Event 기반 검색 테스트입니다.
 
-  search_events()는 Event 객체 리스트를 반환합니다.
-  각 Event에는 관련된 Market들이 그룹핑되어 있습니다.
+  - search_events(): 키워드로 Event 검색 (Market들 그룹핑)
+  - 15분 마켓: BTC/ETH/SOL 등의 15분 단위 Up/Down 마켓 조회
 """)
 
     while True:
@@ -270,6 +379,7 @@ async def main():
         print("  1. search_events() 테스트")
         print("  2. 대화형 검색 (이벤트 -> 마켓 선택)")
         print("  3. Event/Market 구조 설명")
+        print("  4. 15분 마켓 조회 (BTC/ETH/SOL 등)")
         print("  q. 종료")
 
         choice = input("\n선택: ").strip().lower()
@@ -284,6 +394,8 @@ async def main():
                 await interactive_search()
             elif choice == "3":
                 await show_event_structure()
+            elif choice == "4":
+                await test_15m_market()
             elif choice == "q":
                 break
             else:

@@ -14,12 +14,99 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 
 # Default TTL for token cache (1 hour)
 TOKEN_CACHE_TTL_SECONDS = 3600
+
+
+# === 15-Minute Market Utilities ===
+
+
+def get_15m_market_id(
+    coin: str = "btc",
+    dt: datetime | None = None,
+) -> str:
+    """
+    Generate 15-minute up/down market ID (event slug) for a specific time.
+
+    The 15-minute markets run on fixed intervals:
+    - :00-:15, :15-:30, :30-:45, :45-:00
+
+    Args:
+        coin: Coin symbol (e.g., "btc", "eth", "sol")
+        dt: Datetime for the market (default: current UTC time)
+
+    Returns:
+        Market event slug (e.g., "btc-updown-15m-1770114600")
+
+    Example:
+        # Current 15-minute market
+        market_id = get_15m_market_id("btc")
+
+        # Specific time
+        from datetime import datetime, timezone
+        dt = datetime(2026, 2, 3, 10, 30, tzinfo=timezone.utc)
+        market_id = get_15m_market_id("btc", dt)
+    """
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+
+    # Ensure UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    # Round down to nearest 15-minute mark
+    minute = (dt.minute // 15) * 15
+    rounded = dt.replace(minute=minute, second=0, microsecond=0)
+
+    timestamp = int(rounded.timestamp())
+    return f"{coin.lower()}-updown-15m-{timestamp}"
+
+
+def get_current_15m_market_id(coin: str = "btc") -> str:
+    """
+    Get the current 15-minute market ID based on current UTC time.
+
+    Args:
+        coin: Coin symbol (e.g., "btc", "eth", "sol")
+
+    Returns:
+        Current market event slug
+
+    Example:
+        market_id = get_current_15m_market_id("btc")
+        event = await exchange.fetch_event(market_id)
+    """
+    return get_15m_market_id(coin)
+
+
+def get_next_15m_market_id(coin: str = "btc") -> str:
+    """
+    Get the next 15-minute market ID (upcoming market).
+
+    Args:
+        coin: Coin symbol (e.g., "btc", "eth", "sol")
+
+    Returns:
+        Next market event slug
+
+    Example:
+        next_id = get_next_15m_market_id("btc")
+        event = await exchange.fetch_event(next_id)
+    """
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    # Round down to current 15-min mark, then add 15 minutes
+    minute = (now.minute // 15) * 15
+    current = now.replace(minute=minute, second=0, microsecond=0)
+    next_dt = current + timedelta(minutes=15)
+
+    return get_15m_market_id(coin, next_dt)
 
 
 @dataclass
@@ -1205,57 +1292,100 @@ class Polymarket(Exchange):
 
 
     async def search_events(
-        self, keyword: str, limit: int = 50, tag: str | None = None
+        self,
+        keyword: str,
+        limit: int = 50,
+        tag: str | None = None,
+        include_closed: bool = False,
     ) -> list[Event]:
         """
-        Search events by keyword.
+        Search events by keyword with automatic pagination.
 
         Returns Event objects with their markets grouped together.
 
         Args:
             keyword: Search keyword
-            limit: Max results
+            limit: Max total results to return
             tag: Optional tag filter (slug, e.g., "crypto", "politics")
+            include_closed: Include closed/resolved events (default: False = active only)
 
         Returns:
             List of matching Event objects
 
         Example:
+            # Search active events only (default)
             events = await exchange.search_events("bitcoin")
-            for event in events:
-                print(f"{event.title}: {len(event.markets)} markets")
+
+            # Include closed events
+            events = await exchange.search_events("bitcoin", include_closed=True)
+
+            # Get more results
+            events = await exchange.search_events("bitcoin", limit=100)
         """
         if self._rest_client is None:
             raise RuntimeError("REST client not initialized")
 
-        response = await self._rest_client.search_markets(keyword=keyword, limit=limit, tag=tag)
+        events: list[Event] = []
+        page = 1
+        page_size = min(limit, 20)  # API default page size
 
-        # /public-search returns {events: [...], tags: [...], profiles: [...]}
-        raw_events = response.get("events", []) or []
+        while len(events) < limit:
+            response = await self._rest_client.search_markets(
+                keyword=keyword,
+                limit=page_size,
+                page=page,
+                tag=tag,
+                keep_closed_markets=include_closed,
+                events_status=None if include_closed else "active",
+            )
 
-        events = []
-        for raw_event in raw_events:
-            event = parse_event(raw_event)
+            print(response.get("pagination"))
 
-            # Skip closed events or events with no active markets
-            if event.status == EventStatus.CLOSED or not event.markets:
-                continue
+            # /public-search returns {events: [...], tags: [...], profiles: [...], pagination: {...}}
+            raw_events = response.get("events", []) or []
 
-            events.append(event)
+            if not raw_events:
+                break  # No more results
 
-            # Cache event (add to existing, don't replace)
-            self._events[event.id] = event
+            for raw_event in raw_events:
+                if len(events) >= limit:
+                    break
 
-            # Cache markets and tokens
-            for market in event.markets:
-                self._markets[market.id] = market
+                event = parse_event(raw_event)
 
-            for raw_market in raw_event.get("markets", []):
-                condition_id = raw_market.get("conditionId", raw_market.get("condition_id"))
-                if condition_id:
-                    tokens = parse_market_tokens(raw_market)
-                    if tokens:
-                        self._cache_market_tokens(condition_id, tokens)
+                # Skip closed/resolved events unless include_closed is True
+                if not include_closed and event.status in (EventStatus.CLOSED, EventStatus.RESOLVED):
+                    continue
+
+                # Skip events with no markets
+                if not event.markets:
+                    continue
+
+                events.append(event)
+
+                # Cache event (add to existing, don't replace)
+                self._events[event.id] = event
+
+                # Cache markets and tokens
+                for market in event.markets:
+                    self._markets[market.id] = market
+
+                for raw_market in raw_event.get("markets", []):
+                    condition_id = raw_market.get("conditionId", raw_market.get("condition_id"))
+                    if condition_id:
+                        tokens = parse_market_tokens(raw_market)
+                        if tokens:
+                            self._cache_market_tokens(condition_id, tokens)
+
+            # Check if there are more pages
+            # pagination format: {'hasMore': True/False, 'totalResults': int}
+            pagination = response.get("pagination", {})
+            has_more = pagination.get("hasMore", False)
+
+            if not has_more:
+                break
+
+            page += 1
 
         return events
 
