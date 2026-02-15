@@ -274,6 +274,10 @@ class PolymarketWebSocketClient:
             except Exception as e:
                 logger.error(f"[polymarket] Raw callback error: {e}")
 
+        # Skip non-dict messages (e.g. batch arrays)
+        if not isinstance(message, dict):
+            return
+
         # Handle pong
         if message.get("type") == "pong":
             return
