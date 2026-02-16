@@ -69,7 +69,7 @@ async def test_search_events(keyword: str = "bitcoin", limit: int = 5):
         for i, event in enumerate(events, 1):
             market_count = len(event.markets)
             status = event.status.value if event.status else "unknown"
-            print(f"\n  [{i}] {truncate(event.title, 50)}")
+            print(f"\n  [{i}] {event.title}")
             print(f"      ID: {event.id}")
             print(f"      상태: {status} | 마켓 수: {market_count}개")
 
@@ -337,6 +337,7 @@ async def test_15m_market():
     async with create_exchange("polymarket") as exchange:
         try:
             event = await exchange.fetch_event(market_id)
+            print(event.raw)
 
             print(f"\n📁 이벤트: {event.title}")
             print(f"   ID: {event.id}")

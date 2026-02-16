@@ -664,13 +664,15 @@ class Polymarket(Exchange):
 
         # Handle market orders - find price that can fill entire order
         if order_type == OrderType.MARKET or price is None:
-            orderbook = await self.fetch_orderbook(market_id, outcome)
+            #orderbook = await self.fetch_orderbook(market_id, outcome)
             if side == OrderSide.BUY:
                 # BUY: sweep through asks to find price that fills order
-                price = self._calculate_market_buy_price(orderbook.asks, orderbook.bids, size)
+                #price = self._calculate_market_buy_price(orderbook.asks, orderbook.bids, size)
+                price = 0.99 # for convinience, since actual price calculation can be complex and is not the focus here
             else:
                 # SELL: sweep through bids to find price that fills order
-                price = self._calculate_market_sell_price(orderbook.bids, orderbook.asks, size)
+                #price = self._calculate_market_sell_price(orderbook.bids, orderbook.asks, size)
+                price = 0.01 # for convinience, since actual price calculation can be complex and is not the focus here
             order_type = OrderType.MARKET
             print(f"[{self.id}] Market order: price = {price} for {size} shares")
 
