@@ -26,6 +26,35 @@ TOKEN_CACHE_TTL_SECONDS = 3600
 # === 15-Minute Market Utilities ===
 
 
+def get_updown_market_id(
+    coin: str = "btc",
+    dt: datetime | None = None,
+    window_sec: int = 900,
+    infix: str = "15m",
+) -> str:
+    """
+    Generate up/down market ID (event slug) for a specific time and window size.
+
+    Args:
+        coin: Coin symbol (e.g., "btc", "eth", "sol")
+        dt: Datetime for the market (default: current UTC time)
+        window_sec: Window duration in seconds (900 for 15m, 300 for 5m)
+        infix: Market infix string ("15m", "5m")
+
+    Returns:
+        Market event slug (e.g., "btc-updown-15m-1770114600")
+    """
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    ts = int(dt.timestamp())
+    window_start = ts - (ts % window_sec)
+    return f"{coin.lower()}-updown-{infix}-{window_start}"
+
+
 def get_15m_market_id(
     coin: str = "btc",
     dt: datetime | None = None,
@@ -52,19 +81,7 @@ def get_15m_market_id(
         dt = datetime(2026, 2, 3, 10, 30, tzinfo=timezone.utc)
         market_id = get_15m_market_id("btc", dt)
     """
-    if dt is None:
-        dt = datetime.now(timezone.utc)
-
-    # Ensure UTC
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-
-    # Round down to nearest 15-minute mark
-    minute = (dt.minute // 15) * 15
-    rounded = dt.replace(minute=minute, second=0, microsecond=0)
-
-    timestamp = int(rounded.timestamp())
-    return f"{coin.lower()}-updown-15m-{timestamp}"
+    return get_updown_market_id(coin, dt, window_sec=900, infix="15m")
 
 
 def get_current_15m_market_id(coin: str = "btc") -> str:
@@ -101,12 +118,49 @@ def get_next_15m_market_id(coin: str = "btc") -> str:
     from datetime import timedelta
 
     now = datetime.now(timezone.utc)
-    # Round down to current 15-min mark, then add 15 minutes
     minute = (now.minute // 15) * 15
     current = now.replace(minute=minute, second=0, microsecond=0)
     next_dt = current + timedelta(minutes=15)
 
     return get_15m_market_id(coin, next_dt)
+
+
+# === 5-Minute Market Utilities (BTC only) ===
+
+
+def get_5m_market_id(
+    coin: str = "btc",
+    dt: datetime | None = None,
+) -> str:
+    """
+    Generate 5-minute up/down market ID (event slug) for a specific time.
+
+    5-minute markets run on fixed 5-minute intervals (BTC only).
+
+    Args:
+        coin: Coin symbol (currently only "btc" is supported)
+        dt: Datetime for the market (default: current UTC time)
+
+    Returns:
+        Market event slug (e.g., "btc-updown-5m-1771303200")
+    """
+    return get_updown_market_id(coin, dt, window_sec=300, infix="5m")
+
+
+def get_current_5m_market_id(coin: str = "btc") -> str:
+    """Get the current 5-minute market ID based on current UTC time."""
+    return get_5m_market_id(coin)
+
+
+def get_next_5m_market_id(coin: str = "btc") -> str:
+    """Get the next 5-minute market ID (upcoming market)."""
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    ts = int(now.timestamp())
+    current_start = ts - (ts % 300)
+    next_dt = datetime.fromtimestamp(current_start + 300, tz=timezone.utc)
+    return get_5m_market_id(coin, next_dt)
 
 
 @dataclass
@@ -668,11 +722,11 @@ class Polymarket(Exchange):
             if side == OrderSide.BUY:
                 # BUY: sweep through asks to find price that fills order
                 #price = self._calculate_market_buy_price(orderbook.asks, orderbook.bids, size)
-                price = 0.99 # for convinience, since actual price calculation can be complex and is not the focus here
+                price = Decimal("0.99")
             else:
                 # SELL: sweep through bids to find price that fills order
                 #price = self._calculate_market_sell_price(orderbook.bids, orderbook.asks, size)
-                price = 0.01 # for convinience, since actual price calculation can be complex and is not the focus here
+                price = Decimal("0.01")
             order_type = OrderType.MARKET
             print(f"[{self.id}] Market order: price = {price} for {size} shares")
 

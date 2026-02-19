@@ -51,9 +51,13 @@ Configuration:
 
 from prediction_markets.exchanges.polymarket.polymarket import (
     Polymarket,
+    get_updown_market_id,
     get_15m_market_id,
     get_current_15m_market_id,
     get_next_15m_market_id,
+    get_5m_market_id,
+    get_current_5m_market_id,
+    get_next_5m_market_id,
 )
 from prediction_markets.exchanges.polymarket.rest_api import (
     ApiCreds,
@@ -84,10 +88,14 @@ from prediction_markets.exchanges.polymarket.constants import (
 __all__ = [
     # Main exchange class
     "Polymarket",
-    # 15-minute market utilities
+    # Market ID utilities
+    "get_updown_market_id",
     "get_15m_market_id",
     "get_current_15m_market_id",
     "get_next_15m_market_id",
+    "get_5m_market_id",
+    "get_current_5m_market_id",
+    "get_next_5m_market_id",
     # REST API
     "PolymarketRestClient",
     "ApiCreds",
